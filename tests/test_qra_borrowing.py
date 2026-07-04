@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
 from tdchf.qra_borrowing import QRA_REQUIRED_COLUMNS, parse_borrowing_release
 
@@ -33,10 +32,22 @@ def test_parse_paydown_release_signs_net_borrowing_surprise() -> None:
     assert parsed.surprise_bn == -38.0
 
 
+def test_parse_trillion_amount_rounds_at_parse_boundary() -> None:
+    parsed = parse_borrowing_release(
+        "July 31, 2023. During the July - September 2023 quarter, Treasury "
+        "expects to borrow $1.007 trillion in privately-held net marketable debt, "
+        "assuming an end-of-September cash balance of $650 billion. "
+        "This borrowing estimate is $274 billion higher than announced in May.",
+    )
+
+    assert parsed.quarter == "2023Q3"
+    assert parsed.announced_net_borrowing_bn == 1007.0
+    assert parsed.prior_estimate_bn == 733.0
+
+
 def test_qra_borrowing_output_schema_and_arithmetic() -> None:
     path = Path("data/processed/qra_borrowing_surprise.csv")
-    if not path.exists():
-        pytest.skip("generated QRA borrowing surprise CSV is not present")
+    assert path.exists(), "generated QRA borrowing surprise CSV is required for anti-drift coverage"
 
     df = pd.read_csv(path)
     assert list(df.columns) == QRA_REQUIRED_COLUMNS
@@ -52,8 +63,7 @@ def test_qra_borrowing_output_schema_and_arithmetic() -> None:
 
 def test_qra_borrowing_output_pins_independently_verified_values() -> None:
     path = Path("data/processed/qra_borrowing_surprise.csv")
-    if not path.exists():
-        pytest.skip("generated QRA borrowing surprise CSV is not present")
+    assert path.exists(), "generated QRA borrowing surprise CSV is required for anti-drift pins"
 
     df = pd.read_csv(path).set_index("quarter")
     expected = {

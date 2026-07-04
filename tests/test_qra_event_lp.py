@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from tdchf.qra_event_lp import construct_qra_event_panel, estimate_qra_event_lps, normalize_weekly_panel_units
+from tdchf.qra_event_lp import HORIZONS, OUTCOME_SPECS, construct_qra_event_panel, estimate_qra_event_lps, normalize_weekly_panel_units
 
 
 def test_qra_event_panel_alignment_has_no_lookahead(tmp_path) -> None:
@@ -54,6 +54,12 @@ def test_qra_event_lp_normalizes_h4_series_to_billions() -> None:
     assert out.loc[0, "broad_deposits_nsa"] == 19000.0
 
 
+def test_qra_event_lp_uses_rrpontsyd_as_headline_on_rrp_and_drops_dead_placebo() -> None:
+    assert OUTCOME_SPECS["on_rrp_rrpontsyd"] == "onrrp"
+    assert OUTCOME_SPECS["on_rrp_total_incl_foreign_wlrral"] == "fed_liquidity_facilities"
+    assert -1 not in HORIZONS
+
+
 def test_qra_event_lp_smoke_recovers_planted_beta() -> None:
     n = 36
     rng = np.random.default_rng(123)
@@ -73,10 +79,11 @@ def test_qra_event_lp_smoke_recovers_planted_beta() -> None:
             "prior_estimate_bn": prior,
             "pretrend_4w_bn": pretrend,
             "exclude_2020_outlier": [False] * n,
+            "exclude_pandemic_block": [False] * n,
             "post_2020": [False] * n,
             "rrp_active": [False] * n,
-            "tga_target_surprise_bn": [np.nan] * n,
-            "deficit_surprise_bn": [np.nan] * n,
+            "tga_target_component_bn": [np.nan] * n,
+            "deficit_component_bn": [np.nan] * n,
         }
     )
 

@@ -154,12 +154,25 @@ def _money_to_bn(value: str, unit: str | None) -> float:
     number = float(value.replace(",", ""))
     if unit and unit.lower().startswith("trillion"):
         number *= 1000.0
-    return number
+    return round(number, 3)
 
 
 def _quarter_from_end_month(end_month: str, year: str) -> str:
     q = MONTH_TO_QUARTER[end_month.lower()]
     return f"{year}{q}"
+
+
+def _end_month_from_period(period: str) -> str | None:
+    months = re.findall(
+        r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\b",
+        period,
+        re.I,
+    )
+    for month in reversed(months):
+        month_lower = month.lower()
+        if month_lower in MONTH_TO_QUARTER:
+            return month_lower
+    return None
 
 
 def _year_from_period(period: str, fallback_year: int) -> int:
@@ -204,8 +217,8 @@ _ESTIMATE_RE = re.compile(
     r"(?:expects to|estimated|will) (?P<verb>borrow|issue|pay down|paydown|borrowed|issued) "
     r"\$(?P<amount>[\d,.]+)\s*(?P<unit>trillion|billion)?"
     r"(?P<body>[^.]{0,260}?(?:net [^.]{0,120}?marketable debt|marketable debt)[^.]{0,260}?)"
-    r"assuming an end-of-(?P<end_month>[A-Za-z]+) cash balance of "
-    r"\$(?P<tga>[\d,.]+)\s*(?P<tga_unit>trillion|billion)?",
+    r"(?:assuming an end-of-(?P<end_month>[A-Za-z]+) cash balance of "
+    r"\$(?P<tga>[\d,.]+)\s*(?P<tga_unit>trillion|billion)?)?",
     re.I,
 )
 
@@ -266,6 +279,21 @@ def _extract_prior_tga_from_cash_table(text: str) -> float | None:
     return value if abs(value) < 1500 else None
 
 
+_CASH_BALANCE_RE = re.compile(
+    r"assuming an end-of-(?P<end_month>[A-Za-z]+) cash balance of "
+    r"\$(?P<tga>[\d,.]+)\s*(?P<tga_unit>trillion|billion)?",
+    re.I,
+)
+
+
+def _extract_cash_assumption_near_estimate(text: str, estimate_end: int) -> float | None:
+    window = text[estimate_end : estimate_end + 450]
+    match = _CASH_BALANCE_RE.search(window)
+    if match is None:
+        return None
+    return _money_to_bn(match.group("tga"), match.group("tga_unit"))
+
+
 def parse_borrowing_release(text: str, *, source_path: str | Path | None = None) -> BorrowingParse:
     html_date = parse_html_publication_date(text)
     normalized = document_to_text(text, source_path=source_path)
@@ -289,8 +317,27 @@ def parse_borrowing_release(text: str, *, source_path: str | Path | None = None)
     release_year = int(release_date[:4]) if release_date else int(re.search(r"\b(20\d{2}|19\d{2})\b", normalized).group(1))
     announced = _signed_announced(estimate.group("verb"), _money_to_bn(estimate.group("amount"), estimate.group("unit")))
     quarter_year = _year_from_period(estimate.group("period"), release_year)
-    quarter = _quarter_from_end_month(estimate.group("end_month"), str(quarter_year))
-    tga_current = _money_to_bn(estimate.group("tga"), estimate.group("tga_unit"))
+    end_month = estimate.group("end_month") or _end_month_from_period(estimate.group("period"))
+    if end_month is None:
+        return BorrowingParse(
+            quarter="",
+            release_date=release_date,
+            announced_net_borrowing_bn=announced,
+            prior_estimate_bn=None,
+            prior_release_date=None,
+            surprise_bn=None,
+            tga_assumption_announced_bn=None,
+            tga_assumption_prior_bn=None,
+            evidence_sentence=_sentence_around(normalized, estimate.start(), estimate.end()),
+            parse_quality="missing",
+            note="estimate quarter end month not parsed",
+        )
+    quarter = _quarter_from_end_month(end_month, str(quarter_year))
+    tga_current = (
+        _money_to_bn(estimate.group("tga"), estimate.group("tga_unit"))
+        if estimate.group("tga") is not None
+        else _extract_cash_assumption_near_estimate(normalized, estimate.end())
+    )
 
     search_start = estimate.end()
     revision = _REVISION_RE.search(normalized, search_start, search_start + 700)
@@ -340,12 +387,20 @@ def parse_borrowing_estimates(text: str, *, source_path: str | Path | None = Non
     for match in _ESTIMATE_RE.finditer(normalized):
         amount = _signed_announced(match.group("verb"), _money_to_bn(match.group("amount"), match.group("unit")))
         quarter_year = _year_from_period(match.group("period"), release_year)
-        quarter = _quarter_from_end_month(match.group("end_month"), str(quarter_year))
+        end_month = match.group("end_month") or _end_month_from_period(match.group("period"))
+        if end_month is None:
+            continue
+        quarter = _quarter_from_end_month(end_month, str(quarter_year))
+        tga_assumption = (
+            _money_to_bn(match.group("tga"), match.group("tga_unit"))
+            if match.group("tga") is not None
+            else _extract_cash_assumption_near_estimate(normalized, match.end())
+        )
         estimates.append(
             EstimateParse(
                 quarter=quarter,
                 amount_bn=amount,
-                tga_assumption_bn=_money_to_bn(match.group("tga"), match.group("tga_unit")),
+                tga_assumption_bn=tga_assumption,
                 evidence_sentence=_sentence_around(normalized, match.start(), match.end()),
             )
         )

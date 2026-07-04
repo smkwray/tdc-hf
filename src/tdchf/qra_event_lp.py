@@ -32,17 +32,41 @@ BILLION_DOLLAR_LEVEL_COLUMNS = {
 OUTCOME_SPECS = {
     "deposits_dpsacb": "broad_deposits_nsa",
     "reserves_wresbal": "reserves",
-    "onrrp_wlrral": "fed_liquidity_facilities",
+    "on_rrp_rrpontsyd": "onrrp",
+    "on_rrp_total_incl_foreign_wlrral": "fed_liquidity_facilities",
     "tga_wtregen": "tga_week_avg",
     "walcl": "fed_total_assets",
     "bank_credit_totbkcr": "bank_credit",
-    "sensitivity_onrrp_rrpontsyd": "onrrp",
     "sensitivity_tga_wdts": "tga_wednesday",
 }
 
-HORIZONS = [*range(-4, 0), *range(1, 9)]
+HEADLINE_OUTCOMES = ["deposits_dpsacb", "reserves_wresbal", "on_rrp_rrpontsyd", "tga_wtregen"]
+REPORT_HORIZONS = [1, 4, 8]
+PLACEBO_HORIZONS = [-4, -3, -2]
+HORIZONS = [*PLACEBO_HORIZONS, *range(1, 9)]
 OUTLIER_QUARTERS = {"2020Q2", "2020Q3"}
+PANDEMIC_BLOCK_QUARTERS = {"2020Q2", "2020Q3", "2020Q4", "2021Q1"}
 FRED_GDP_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=GDP"
+WILD_BOOTSTRAP_REPS = 9999
+WILD_BOOTSTRAP_SEED = 20260704
+
+OUTCOME_LABELS = {
+    "deposits_dpsacb": "Deposits",
+    "reserves_wresbal": "Reserves",
+    "on_rrp_rrpontsyd": "ON RRP facility (RRPONTSYD)",
+    "on_rrp_total_incl_foreign_wlrral": "Total reverse repos incl. foreign pool (WLRRAL)",
+    "tga_wtregen": "TGA",
+    "walcl": "Fed total assets",
+    "bank_credit_totbkcr": "Bank credit",
+    "sensitivity_tga_wdts": "TGA Wednesday sensitivity",
+}
+
+SAMPLE_LABELS = {
+    "full": "(a) full",
+    "exclude_2020Q2_Q3": "(b) ex-2020Q2/Q3",
+    "gdp_scaled": "(c) GDP-scaled",
+    "exclude_pandemic_block": "(d) ex-pandemic-block",
+}
 
 
 @dataclass(frozen=True)
@@ -156,31 +180,101 @@ def construct_qra_event_panel(
                         "prior_estimate_bn": prior_estimate,
                         "pretrend_4w_bn": float(pretrend) if pd.notna(pretrend) else np.nan,
                         "exclude_2020_outlier": quarter in OUTLIER_QUARTERS,
+                        "exclude_pandemic_block": quarter in PANDEMIC_BLOCK_QUARTERS,
                         "post_2020": release_date >= pd.Timestamp("2020-01-01"),
                         "rrp_active": bool(pd.notna(rrp_lag_bn) and rrp_lag_bn > 50.0),
                         "rrp_lag_bn": rrp_lag_bn,
-                        "tga_target_surprise_bn": tga_component,
-                        "deficit_surprise_bn": surprise - tga_component if pd.notna(tga_component) else np.nan,
+                        "tga_target_component_bn": tga_component,
+                        "deficit_component_bn": surprise - tga_component if pd.notna(tga_component) else np.nan,
                     }
                 )
     return pd.DataFrame(rows)
 
 
-def _fit_ols(sample: pd.DataFrame, shock_col: str) -> dict[str, float] | None:
-    cols = ["y_change_bn", shock_col, "prior_estimate_bn", "pretrend_4w_bn"]
-    sample = sample[cols].replace([np.inf, -np.inf], np.nan).dropna()
-    if len(sample) < 6 or sample[shock_col].nunique() < 2:
+def _stable_seed(*parts: object) -> int:
+    text = "|".join(str(part) for part in parts)
+    return WILD_BOOTSTRAP_SEED + sum((idx + 1) * ord(char) for idx, char in enumerate(text))
+
+
+def _clean_regression_sample(sample: pd.DataFrame, shock_cols: list[str]) -> pd.DataFrame:
+    cols = ["y_change_bn", *shock_cols, "prior_estimate_bn", "pretrend_4w_bn"]
+    return sample[cols].replace([np.inf, -np.inf], np.nan).dropna()
+
+
+def _wild_bootstrap_p(
+    clean: pd.DataFrame,
+    shock_cols: list[str],
+    shock_col: str,
+    beta_hat: float,
+    *,
+    reps: int = WILD_BOOTSTRAP_REPS,
+    seed: int = WILD_BOOTSTRAP_SEED,
+) -> float:
+    y = clean["y_change_bn"].to_numpy(dtype=float)
+    x_full = sm.add_constant(clean[[*shock_cols, "prior_estimate_bn", "pretrend_4w_bn"]], has_constant="add").to_numpy(dtype=float)
+    x_restricted = sm.add_constant(clean[["prior_estimate_bn", "pretrend_4w_bn"]], has_constant="add").to_numpy(dtype=float)
+    try:
+        restricted_beta = np.linalg.lstsq(x_restricted, y, rcond=None)[0]
+        fitted_null = x_restricted @ restricted_beta
+        residuals_null = y - fitted_null
+        pinv_full = np.linalg.pinv(x_full)
+        shock_idx = [*shock_cols, "prior_estimate_bn", "pretrend_4w_bn"].index(shock_col) + 1
+    except np.linalg.LinAlgError:
+        return np.nan
+    rng = np.random.default_rng(seed)
+    signs = rng.choice(np.array([-1.0, 1.0]), size=(len(y), reps))
+    y_star = fitted_null[:, None] + residuals_null[:, None] * signs
+    boot_betas = (pinv_full @ y_star)[shock_idx]
+    return float(np.mean(np.abs(boot_betas) >= abs(beta_hat)))
+
+
+def _fit_ols(sample: pd.DataFrame, shock_cols: list[str]) -> dict[str, dict[str, float]] | None:
+    sample = _clean_regression_sample(sample, shock_cols)
+    if len(sample) < 6:
         return None
-    xcols = [shock_col, "prior_estimate_bn", "pretrend_4w_bn"]
+    for shock_col in shock_cols:
+        if sample[shock_col].nunique() < 2:
+            return None
+    xcols = [*shock_cols, "prior_estimate_bn", "pretrend_4w_bn"]
     x = sm.add_constant(sample[xcols], has_constant="add")
     fit = sm.OLS(sample["y_change_bn"], x).fit(cov_type="HC1")
-    return {
-        "beta": float(fit.params[shock_col]),
-        "se": float(fit.bse[shock_col]),
-        "p": float(fit.pvalues[shock_col]),
-        "t": float(fit.tvalues[shock_col]),
-        "n": int(fit.nobs),
+    out: dict[str, dict[str, float]] = {}
+    for shock_col in shock_cols:
+        out[shock_col] = {
+            "beta": float(fit.params[shock_col]),
+            "se": float(fit.bse[shock_col]),
+            "p": float(fit.pvalues[shock_col]),
+            "t": float(fit.tvalues[shock_col]),
+            "n": int(fit.nobs),
+        }
+    return out
+
+
+def _wild_bootstrap_for_row(
+    group: pd.DataFrame,
+    *,
+    sample_name: str,
+    scaling: str,
+    shock_cols: list[str],
+    shock_col: str,
+    outcome: str,
+    horizon: int,
+    beta: float,
+) -> float:
+    headline = outcome in HEADLINE_OUTCOMES and horizon in REPORT_HORIZONS
+    headline_sample = (sample_name, scaling) in {
+        ("full", "bn"),
+        ("exclude_2020Q2_Q3", "bn"),
+        ("gdp_scaled", "pct_gdp"),
+        ("exclude_pandemic_block", "bn"),
     }
+    if not (headline and headline_sample):
+        return np.nan
+    clean = _clean_regression_sample(group, shock_cols)
+    if len(clean) < 6:
+        return np.nan
+    seed = _stable_seed(sample_name, scaling, shock_col, outcome, horizon)
+    return _wild_bootstrap_p(clean, shock_cols, shock_col, beta, seed=seed)
 
 
 def _estimate_group(
@@ -188,58 +282,83 @@ def _estimate_group(
     *,
     sample_name: str,
     scaling: str,
-    shock_col: str,
+    shock_cols: list[str],
     thin_cell: bool,
     spec_flags: str,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     mean_gdp = float(panel["gdp_bn"].dropna().mean()) if "gdp_bn" in panel.columns else np.nan
     for (outcome, horizon), group in panel.groupby(["outcome", "horizon"], sort=True):
-        fit = _fit_ols(group, shock_col)
+        fit = _fit_ols(group, shock_cols)
         if fit is None:
             continue
-        beta = fit["beta"]
-        se = fit["se"]
         if scaling == "pct_gdp":
             multiplier = (100.0 / mean_gdp) * 100.0 if np.isfinite(mean_gdp) and mean_gdp else np.nan
         else:
             multiplier = 100.0
-        rows.append(
-            {
-                "outcome": outcome,
-                "horizon": int(horizon),
-                "sample": sample_name,
-                "scaling": scaling,
-                "shock": shock_col,
-                "beta": beta,
-                "se": se,
-                "p": fit["p"],
-                "t": fit["t"],
-                "n": fit["n"],
-                "beta_per_100bn": beta * multiplier if np.isfinite(multiplier) else np.nan,
-                "se_per_100bn": se * multiplier if np.isfinite(multiplier) else np.nan,
-                "thin_cell": bool(thin_cell),
-                "spec_flags": spec_flags,
-            }
-        )
+        for shock_col, values in fit.items():
+            beta = values["beta"]
+            se = values["se"]
+            p_wild = _wild_bootstrap_for_row(
+                group,
+                sample_name=sample_name,
+                scaling=scaling,
+                shock_cols=shock_cols,
+                shock_col=shock_col,
+                outcome=str(outcome),
+                horizon=int(horizon),
+                beta=beta,
+            )
+            rows.append(
+                {
+                    "outcome": outcome,
+                    "horizon": int(horizon),
+                    "sample": sample_name,
+                    "scaling": scaling,
+                    "shock": shock_col,
+                    "beta": beta,
+                    "se": se,
+                    "p": values["p"],
+                    "p_wild_bootstrap": p_wild,
+                    "t": values["t"],
+                    "n": values["n"],
+                    "beta_per_100bn": beta * multiplier if np.isfinite(multiplier) else np.nan,
+                    "se_per_100bn": se * multiplier if np.isfinite(multiplier) else np.nan,
+                    "thin_cell": bool(thin_cell),
+                    "spec_flags": spec_flags,
+                }
+            )
     return rows
 
 
 def estimate_qra_event_lps(event_panel: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     variants = [
-        ("full", "bn", "surprise_bn", event_panel, "HC1; controls=prior_estimate_bn+pretrend_4w_bn"),
+        ("full", "bn", ["surprise_bn"], event_panel, "HC1; controls=prior_estimate_bn+pretrend_4w_bn"),
         (
             "exclude_2020Q2_Q3",
             "bn",
-            "surprise_bn",
+            ["surprise_bn"],
             event_panel.loc[~event_panel["exclude_2020_outlier"]],
             "HC1; excludes 2020Q2 and 2020Q3; controls=prior_estimate_bn+pretrend_4w_bn",
         ),
-        ("full", "pct_gdp", "surprise_pct_gdp", event_panel, "HC1; surprise scaled by nominal GDP; controls=prior_estimate_bn+pretrend_4w_bn"),
+        (
+            "gdp_scaled",
+            "pct_gdp",
+            ["surprise_pct_gdp"],
+            event_panel,
+            "HC1; surprise scaled by nominal GDP; controls=prior_estimate_bn+pretrend_4w_bn",
+        ),
+        (
+            "exclude_pandemic_block",
+            "bn",
+            ["surprise_bn"],
+            event_panel.loc[~event_panel["exclude_pandemic_block"]],
+            "HC1; excludes 2020Q2 through 2021Q1; controls=prior_estimate_bn+pretrend_4w_bn",
+        ),
     ]
-    for sample_name, scaling, shock_col, sample, flags in variants:
-        rows.extend(_estimate_group(sample, sample_name=sample_name, scaling=scaling, shock_col=shock_col, thin_cell=False, spec_flags=flags))
+    for sample_name, scaling, shock_cols, sample, flags in variants:
+        rows.extend(_estimate_group(sample, sample_name=sample_name, scaling=scaling, shock_cols=shock_cols, thin_cell=False, spec_flags=flags))
 
     split_specs = [
         ("pre_2020", event_panel.loc[~event_panel["post_2020"]]),
@@ -254,24 +373,31 @@ def estimate_qra_event_lps(event_panel: pd.DataFrame) -> pd.DataFrame:
                 sample,
                 sample_name=sample_name,
                 scaling="bn",
-                shock_col="surprise_bn",
+                shock_cols=["surprise_bn"],
                 thin_cell=event_n < 15,
                 spec_flags=f"HC1; split_n={event_n}; controls=prior_estimate_bn+pretrend_4w_bn",
             )
         )
 
-    decomp = event_panel.loc[event_panel["outcome"].isin(["deposits_dpsacb", "onrrp_wlrral"])]
-    decomp = decomp.dropna(subset=["tga_target_surprise_bn", "deficit_surprise_bn"])
-    for shock_col, scaling in [("tga_target_surprise_bn", "tga_component_bn"), ("deficit_surprise_bn", "deficit_component_bn")]:
-        event_n = int(decomp[["quarter", "release_date"]].drop_duplicates().shape[0])
+    decomp_base = event_panel.loc[event_panel["outcome"].isin(HEADLINE_OUTCOMES)]
+    decomp_base = decomp_base.dropna(subset=["tga_target_component_bn", "deficit_component_bn"])
+    for sample_name, sample, flags in [
+        ("component_decomp_full", decomp_base, "HC1; sensitivity only; both TGA-target and deficit components in the same regression"),
+        (
+            "component_decomp_ex_pandemic_block",
+            decomp_base.loc[~decomp_base["exclude_pandemic_block"]],
+            "HC1; sensitivity only; excludes 2020Q2 through 2021Q1; both components in the same regression",
+        ),
+    ]:
+        event_n = int(sample[["quarter", "release_date"]].drop_duplicates().shape[0])
         rows.extend(
             _estimate_group(
-                decomp,
-                sample_name="tga_decomp",
-                scaling=scaling,
-                shock_col=shock_col,
-                thin_cell=event_n < 15,
-                spec_flags=f"HC1; sensitivity only; decomp_n={event_n}; controls=prior_estimate_bn+pretrend_4w_bn",
+                sample,
+                sample_name=sample_name,
+                scaling="component_bn",
+                shock_cols=["tga_target_component_bn", "deficit_component_bn"],
+                thin_cell=event_n < 30,
+                spec_flags=f"{flags}; decomp_n={event_n}; controls=prior_estimate_bn+pretrend_4w_bn",
             )
         )
     return pd.DataFrame(rows)
@@ -286,72 +412,129 @@ def _markdown_table(frame: pd.DataFrame, columns: list[str]) -> list[str]:
     return out
 
 
+def _display_estimates(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    out["outcome"] = out["outcome"].map(OUTCOME_LABELS).fillna(out["outcome"])
+    out["sample"] = out["sample"].map(SAMPLE_LABELS).fillna(out["sample"])
+    for col in ["beta_per_100bn", "se_per_100bn"]:
+        if col in out.columns:
+            out[col] = out[col].round(2)
+    for col in ["p", "p_wild_bootstrap"]:
+        if col in out.columns:
+            out[col] = out[col].round(3)
+    return out
+
+
 def write_qra_event_lp_readout(estimates: pd.DataFrame, event_panel: pd.DataFrame, out_md: str | Path) -> None:
     path = Path(out_md)
     path.parent.mkdir(parents=True, exist_ok=True)
     headline = estimates.loc[
-        estimates["outcome"].isin(["deposits_dpsacb", "reserves_wresbal", "onrrp_wlrral", "tga_wtregen"])
-        & estimates["horizon"].between(1, 8)
-        & estimates["sample"].isin(["full", "exclude_2020Q2_Q3"])
-        & estimates["scaling"].eq("bn")
+        estimates["outcome"].isin(HEADLINE_OUTCOMES)
+        & estimates["horizon"].isin(REPORT_HORIZONS)
+        & estimates["sample"].isin(["full", "exclude_2020Q2_Q3", "gdp_scaled", "exclude_pandemic_block"])
+        & estimates["shock"].isin(["surprise_bn", "surprise_pct_gdp"])
     ].copy()
-    headline["beta_per_100bn"] = headline["beta_per_100bn"].round(2)
-    headline["se_per_100bn"] = headline["se_per_100bn"].round(2)
+    headline = _display_estimates(headline)
 
-    scaled = estimates.loc[
-        estimates["outcome"].isin(["deposits_dpsacb", "reserves_wresbal", "onrrp_wlrral", "tga_wtregen"])
-        & estimates["horizon"].between(1, 8)
+    placebo = estimates.loc[
+        estimates["horizon"].isin(PLACEBO_HORIZONS)
         & estimates["sample"].eq("full")
-        & estimates["scaling"].eq("pct_gdp")
+        & estimates["scaling"].eq("bn")
+        & estimates["shock"].eq("surprise_bn")
     ].copy()
-    scaled["beta_per_100bn"] = scaled["beta_per_100bn"].round(2)
-
-    placebo = estimates.loc[estimates["horizon"].lt(0) & estimates["sample"].eq("full") & estimates["scaling"].eq("bn")].copy()
     placebo_sig = int((placebo["p"] < 0.05).sum()) if not placebo.empty else 0
-    split_ns = (
-        event_panel.groupby(["post_2020", "rrp_active"])[["quarter", "release_date"]]
-        .apply(lambda x: x.drop_duplicates().shape[0])
-        .reset_index(name="n")
+    placebo = _display_estimates(placebo)
+
+    event_rows = event_panel[["quarter", "release_date", "post_2020", "rrp_active", "tga_target_component_bn", "deficit_component_bn"]].drop_duplicates()
+    event_count = int(event_rows.shape[0])
+    tga_coverage = int(event_rows["tga_target_component_bn"].notna().sum())
+
+    split_counts = pd.DataFrame(
+        [
+            {"sample": "pre_2020", "n": int(event_rows.loc[~event_rows["post_2020"]].shape[0]), "thin_cell": False},
+            {"sample": "post_2020", "n": int(event_rows.loc[event_rows["post_2020"]].shape[0]), "thin_cell": False},
+            {"sample": "rrp_inactive", "n": int(event_rows.loc[~event_rows["rrp_active"]].shape[0]), "thin_cell": False},
+            {"sample": "rrp_active", "n": int(event_rows.loc[event_rows["rrp_active"]].shape[0]), "thin_cell": False},
+        ]
     )
-    split_ns["cell"] = split_ns.apply(
-        lambda r: ("post_2020" if r["post_2020"] else "pre_2020") + "/" + ("rrp_active" if r["rrp_active"] else "rrp_inactive"),
-        axis=1,
-    )
+    split_counts["thin_cell"] = split_counts["n"] < 15
+
+    split_rows = estimates.loc[
+        estimates["sample"].isin(["pre_2020", "post_2020", "rrp_inactive", "rrp_active"])
+        & estimates["outcome"].isin(HEADLINE_OUTCOMES)
+        & estimates["horizon"].isin(REPORT_HORIZONS)
+        & estimates["shock"].eq("surprise_bn")
+    ].copy()
+    split_rows = _display_estimates(split_rows)
+
+    component = estimates.loc[
+        estimates["sample"].isin(["component_decomp_full", "component_decomp_ex_pandemic_block"])
+        & estimates["outcome"].isin(HEADLINE_OUTCOMES)
+        & estimates["horizon"].isin(REPORT_HORIZONS)
+        & estimates["shock"].isin(["tga_target_component_bn", "deficit_component_bn"])
+    ].copy()
+    component = _display_estimates(component)
+
+    wlrral = estimates.loc[
+        estimates["outcome"].eq("on_rrp_total_incl_foreign_wlrral")
+        & estimates["horizon"].isin(REPORT_HORIZONS)
+        & estimates["sample"].isin(["full", "exclude_2020Q2_Q3", "gdp_scaled", "exclude_pandemic_block"])
+        & estimates["shock"].isin(["surprise_bn", "surprise_pct_gdp"])
+    ].copy()
+    wlrral = _display_estimates(wlrral)
+
+    dep_b = estimates.loc[
+        estimates["outcome"].eq("deposits_dpsacb")
+        & estimates["horizon"].eq(4)
+        & estimates["sample"].eq("exclude_2020Q2_Q3")
+        & estimates["shock"].eq("surprise_bn"),
+        "beta_per_100bn",
+    ]
+    dep_c = estimates.loc[
+        estimates["outcome"].eq("deposits_dpsacb")
+        & estimates["horizon"].eq(4)
+        & estimates["sample"].eq("gdp_scaled")
+        & estimates["shock"].eq("surprise_pct_gdp"),
+        "beta_per_100bn",
+    ]
+    dep_reversal = ""
+    if not dep_b.empty and not dep_c.empty:
+        dep_reversal = f" At h=4, sample (b) is {float(dep_b.iloc[0]):+.2f} while sample (c) is {float(dep_c.iloc[0]):+.2f} per $100bn-equivalent surprise."
 
     lines = [
         "# QRA Announcement-Window LP Readout",
         "",
-        "Estimator: event-level local projections with HC1 robust SEs; controls are the prior borrowing estimate and the lagged four-week outcome change. WRESBAL is used for reserves because it is the direct reserve-balance H.4.1 series; H.4.1 million-dollar series are normalized to billions.",
+        "Estimator: event-level local projections with HC1 robust SEs; controls are the prior borrowing estimate and the lagged four-week outcome change. WRESBAL is the reserve outcome. RRPONTSYD is the headline ON-RRP facility outcome, converted to a Wednesday weekly value by the weekly panel; WLRRAL is retained only as a total-reverse-repo sensitivity because it includes the foreign official pool. H.4.1 million-dollar series are normalized to billions.",
         "",
-        "Claim boundary: descriptive announcement-window evidence only. H.8 timing is weekly, the event count is small, and the pre/post and RRP-active splits contain a one-transition regime confound.",
+        f"Event coverage: {event_count} QRA borrowing-estimate events. TGA cash-assumption decomposition coverage: {tga_coverage}/{event_count} events have both announced and prior cash assumptions.",
         "",
         "## Headline effects per $100bn surprise",
         "",
     ]
-    lines.extend(_markdown_table(headline, ["outcome", "horizon", "sample", "beta_per_100bn", "se_per_100bn", "p", "n"]))
-    lines.extend(["", "## GDP-scaled full-sample sensitivity", ""])
-    lines.extend(_markdown_table(scaled, ["outcome", "horizon", "beta_per_100bn", "p", "n"]))
-    lines.extend(["", "## Pre-trend placebos", ""])
-    lines.append(f"Full-sample negative-horizon placebo significant rows at 5 percent: {placebo_sig} of {len(placebo)}.")
-    place = placebo.copy()
-    place["beta_per_100bn"] = place["beta_per_100bn"].round(2)
-    lines.extend(_markdown_table(place, ["outcome", "horizon", "beta_per_100bn", "p", "n"]))
-    lines.extend(["", "## Split cell counts", ""])
-    lines.extend(_markdown_table(split_ns[["cell", "n"]], ["cell", "n"]))
-    split_rows = estimates.loc[
-        estimates["sample"].isin(["pre_2020", "post_2020", "rrp_inactive", "rrp_active"])
-        & estimates["outcome"].isin(["deposits_dpsacb", "onrrp_wlrral"])
-        & estimates["horizon"].isin([1, 4, 8])
-    ].copy()
-    split_rows["beta_per_100bn"] = split_rows["beta_per_100bn"].round(2)
-    lines.extend(["", "## Deposits and ON RRP splits", ""])
+    lines.extend(_markdown_table(headline, ["outcome", "horizon", "sample", "beta_per_100bn", "se_per_100bn", "p", "p_wild_bootstrap", "n"]))
+    lines.extend(["", "## Placebos", ""])
+    lines.append(f"D1-corrected informative placebo rate: {placebo_sig}/{len(placebo)} significant at 5 percent after dropping mechanically zero h=-1 rows.")
+    lines.extend(_markdown_table(placebo, ["outcome", "horizon", "beta_per_100bn", "p", "n"]))
+    lines.extend(["", "## Splits", ""])
+    lines.extend(_markdown_table(split_counts, ["sample", "n", "thin_cell"]))
+    lines.extend(["", "Headline split estimates:", ""])
     lines.extend(_markdown_table(split_rows, ["outcome", "horizon", "sample", "beta_per_100bn", "p", "n", "thin_cell"]))
+    lines.extend(["", "## Component Decomposition", ""])
+    lines.append("For events with both cash assumptions, `tga_target_component_bn = announced cash assumption - prior cash assumption`; `deficit_component_bn = surprise_bn - tga_target_component_bn`. Both components enter the same regression. Cells with n < 30 are labeled sensitivity/thin.")
+    lines.extend(_markdown_table(component, ["outcome", "horizon", "sample", "shock", "beta_per_100bn", "p", "n", "thin_cell"]))
+    lines.extend(["", "## WLRRAL Sensitivity", ""])
+    lines.append("These rows use WLRRAL, total reverse repos including the foreign official pool. They are not the headline ON-RRP facility response.")
+    lines.extend(_markdown_table(wlrral, ["outcome", "horizon", "sample", "beta_per_100bn", "p", "p_wild_bootstrap", "n"]))
     lines.extend(
         [
             "",
-            "## Bounded interpretation",
+            "## Claim Boundary",
             "",
-            "Use the no-2020-outlier and GDP-scaled rows as the disciplined checks on any full-sample pattern. The estimates are not a structural pass-through claim; they describe weekly balance-sheet movements around Treasury borrowing-estimate announcements.",
+            "No signed deposit pass-through claim is warranted. The deposit response sign is sample-contingent." + dep_reversal,
+            "",
+            "The preferred descriptive row is sample (d), excluding 2020Q2 through 2021Q1. Read any qualitative pattern there as balance-sheet plumbing around reserves, TGA, and ON RRP rather than a clean deposit pass-through estimate.",
+            "",
+            "Limits: weekly timing is the floor; n is about 66 before sample restrictions; pre/post-2020 and RRP-active splits have a one-transition regime confound; these are descriptive event-window estimates, not structural identification.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
