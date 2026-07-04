@@ -54,7 +54,7 @@ fi
 # script is missing or non-executable, the hygiene gate cannot run — reject rather
 # than silently letting the commit through.
 if [[ -x scripts/hygiene_check.sh ]]; then
-  if ! scripts/hygiene_check.sh --staged; then
+  if ! HYGIENE_SCAN_ROOTS="${HYGIENE_SCAN_ROOTS:-src scripts config tests}" scripts/hygiene_check.sh --staged; then
     echo "" >&2
     echo "pre-commit: REJECT — hygiene_check failed on staged files." >&2
     echo "Fix the reported violations, re-stage, and retry." >&2

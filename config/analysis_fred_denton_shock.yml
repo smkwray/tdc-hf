@@ -1823,7 +1823,7 @@ steps:
   - id: closeout_anchor_contract_audit
     action: export-anchor-contract-audit
     monthly_proxy: data/processed/fred_denton_proxy/tdc_monthly_proxy.csv
-    tdcest_estimates: /Users/shanewray/malus/proj/tdcest/data/processed/tdc_estimates.csv
+    tdcest_estimates: ../tdcest/data/processed/tdc_estimates.csv
     out: output/tables/closeout/anchor_contract_audit.csv
     out_md: output/tables/closeout/anchor_contract_audit.md
 
