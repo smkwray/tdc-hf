@@ -24,6 +24,7 @@ from .outcomes import FRED_OUTCOME_SERIES, build_monthly_outcomes_csv
 from .pipeline import run_monthly_proxy_pipeline
 from .pretrend import add_pretrend_controls_csv
 from .qra_borrowing import build_qra_borrowing_surprise_csv
+from .qra_event_lp import run_qra_event_lp_csv
 from .readiness import readiness_payload
 from .reporting import (
     compare_iv_robustness_summaries,
@@ -360,6 +361,13 @@ def build_parser() -> argparse.ArgumentParser:
     qra_borrowing.add_argument("--out", default="data/processed/qra_borrowing_surprise.csv", help="Output CSV")
     qra_borrowing.add_argument("--notes", default="data/processed/qra_borrowing_surprise_notes.md", help="Construction note")
     qra_borrowing.add_argument("--extra-url", action="append", default=[], help="Additional Treasury borrowing-estimate release URL")
+
+    qra_lp = subparsers.add_parser("run-qra-event-lp", help="Estimate QRA announcement-window local projections")
+    qra_lp.add_argument("--qra", default="data/processed/qra_borrowing_surprise.csv", help="QRA borrowing-surprise CSV")
+    qra_lp.add_argument("--weekly-panel", default="data/processed/tdc_weekly_channel_panel.csv", help="Weekly outcome panel CSV")
+    qra_lp.add_argument("--gdp", default=None, help="Optional FRED GDP CSV; downloads data/raw/fred_gdp.csv if omitted")
+    qra_lp.add_argument("--out", default="data/processed/qra_event_lp_estimates.csv", help="Output estimates CSV")
+    qra_lp.add_argument("--readout", default="data/processed/qra_event_lp_readout.md", help="Output Markdown readout")
     return parser
 
 
@@ -790,6 +798,17 @@ def main(argv: list[str] | None = None) -> int:
             out_csv=args.out,
             notes_md=args.notes,
             extra_urls=args.extra_url,
+        )
+        print(json.dumps(report, indent=2))
+        return 0
+
+    if args.command == "run-qra-event-lp":
+        report = run_qra_event_lp_csv(
+            qra_csv=args.qra,
+            weekly_panel_csv=args.weekly_panel,
+            gdp_csv=args.gdp,
+            out_csv=args.out,
+            readout_md=args.readout,
         )
         print(json.dumps(report, indent=2))
         return 0

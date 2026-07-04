@@ -23,6 +23,7 @@ QRA_REQUIRED_COLUMNS = [
     "announced_net_borrowing_bn",
     "prior_estimate_bn",
     "prior_release_date",
+    "prior_source",
     "surprise_bn",
     "tga_assumption_announced_bn",
     "tga_assumption_prior_bn",
@@ -60,6 +61,32 @@ QRAWATCH_FALLBACK_DOCS = {
     "qra_2017_08": "data/raw/qra/files/sm0138_cb0a9efeb1.html",
 }
 
+BUILTIN_FETCH_URLS = [
+    # qrawatch registry gap: no current-quarter refunding event between 2021-08 and 2022-05.
+    "https://home.treasury.gov/news/press-releases/jy0452",
+    "https://home.treasury.gov/news/press-releases/jy0575",
+    # Post-registry rows from Work Order 1.
+    "https://home.treasury.gov/news/press-releases/sb0300",
+    "https://home.treasury.gov/news/press-releases/sb0377",
+    "https://home.treasury.gov/news/press-releases/sb0485",
+]
+
+MANUALLY_VERIFIED_QUARTERS = {
+    "2011Q1",
+    "2014Q3",
+    "2016Q1",
+    "2019Q3",
+    "2020Q2",
+    "2021Q2",
+    "2021Q4",
+    "2022Q1",
+    "2023Q3",
+    "2024Q3",
+    "2025Q2",
+    "2026Q1",
+    "2026Q2",
+}
+
 
 class _TextExtractor(HTMLParser):
     def __init__(self) -> None:
@@ -87,6 +114,14 @@ class BorrowingParse:
     evidence_sentence: str
     parse_quality: str
     note: str = ""
+
+
+@dataclass(frozen=True)
+class EstimateParse:
+    quarter: str
+    amount_bn: float
+    tga_assumption_bn: float | None
+    evidence_sentence: str
 
 
 def _utc_now_iso() -> str:
@@ -297,6 +332,26 @@ def parse_borrowing_release(text: str, *, source_path: str | Path | None = None)
     )
 
 
+def parse_borrowing_estimates(text: str, *, source_path: str | Path | None = None) -> list[EstimateParse]:
+    normalized = document_to_text(text, source_path=source_path)
+    release_date = parse_html_publication_date(text) or parse_release_date(normalized) or ""
+    release_year = int(release_date[:4]) if release_date else int(re.search(r"\b(20\d{2}|19\d{2})\b", normalized).group(1))
+    estimates: list[EstimateParse] = []
+    for match in _ESTIMATE_RE.finditer(normalized):
+        amount = _signed_announced(match.group("verb"), _money_to_bn(match.group("amount"), match.group("unit")))
+        quarter_year = _year_from_period(match.group("period"), release_year)
+        quarter = _quarter_from_end_month(match.group("end_month"), str(quarter_year))
+        estimates.append(
+            EstimateParse(
+                quarter=quarter,
+                amount_bn=amount,
+                tga_assumption_bn=_money_to_bn(match.group("tga"), match.group("tga_unit")),
+                evidence_sentence=_sentence_around(normalized, match.start(), match.end()),
+            )
+        )
+    return estimates
+
+
 def _read_sibling_commit(path: Path) -> str:
     git_path = path / ".git"
     try:
@@ -422,13 +477,15 @@ def _release_rows_from_urls(urls: Iterable[str], *, cache_dir: str | Path) -> li
     return rows
 
 
-def _record_from_release(release: dict[str, object]) -> tuple[dict[str, object], str]:
+def _record_from_release(release: dict[str, object]) -> tuple[dict[str, object], str, list[EstimateParse]]:
     source_path = Path(release["source_path"])
-    parsed = parse_borrowing_release(source_path.read_text(encoding="utf-8", errors="replace"), source_path=source_path)
+    payload = source_path.read_text(encoding="utf-8", errors="replace")
+    parsed = parse_borrowing_release(payload, source_path=source_path)
+    estimates = parse_borrowing_estimates(payload, source_path=source_path)
     release_date = parsed.release_date or str(release.get("registry_release_date") or "")[:10]
     quality = parsed.parse_quality
     if quality == "parsed_unverified" and parsed.surprise_bn is not None:
-        quality = "verified"
+        quality = "verified_manual" if parsed.quarter in MANUALLY_VERIFIED_QUARTERS else "parsed_ok"
     note = parsed.note
     row = {
         "event_id": release.get("event_id", ""),
@@ -437,6 +494,7 @@ def _record_from_release(release: dict[str, object]) -> tuple[dict[str, object],
         "announced_net_borrowing_bn": parsed.announced_net_borrowing_bn,
         "prior_estimate_bn": parsed.prior_estimate_bn,
         "prior_release_date": parsed.prior_release_date,
+        "prior_source": "derived_from_revision" if parsed.prior_estimate_bn is not None else "",
         "surprise_bn": parsed.surprise_bn,
         "tga_assumption_announced_bn": parsed.tga_assumption_announced_bn,
         "tga_assumption_prior_bn": parsed.tga_assumption_prior_bn,
@@ -445,7 +503,34 @@ def _record_from_release(release: dict[str, object]) -> tuple[dict[str, object],
         "parse_quality": quality,
         "note": note,
     }
-    return row, parsed.evidence_sentence
+    return row, parsed.evidence_sentence, estimates
+
+
+def _release_month(date_value: object) -> str:
+    text = str(date_value or "")
+    return text[:7] if len(text) >= 7 else ""
+
+
+def _apply_independent_prior_parses(
+    frame: pd.DataFrame,
+    *,
+    estimates_by_release_month: dict[str, list[EstimateParse]],
+) -> pd.DataFrame:
+    out = frame.copy()
+    for idx, row in out.iterrows():
+        prior_month = _release_month(row.get("prior_release_date"))
+        quarter = str(row.get("quarter") or "")
+        if not prior_month or not quarter:
+            continue
+        candidates = estimates_by_release_month.get(prior_month, [])
+        match = next((estimate for estimate in candidates if estimate.quarter == quarter), None)
+        if match is None:
+            continue
+        out.at[idx, "prior_estimate_bn"] = match.amount_bn
+        out.at[idx, "prior_source"] = "parsed_prior_release"
+        if pd.isna(row.get("tga_assumption_prior_bn")) and match.tga_assumption_bn is not None:
+            out.at[idx, "tga_assumption_prior_bn"] = match.tga_assumption_bn
+    return out
 
 
 def build_qra_borrowing_surprise_csv(
@@ -464,18 +549,24 @@ def build_qra_borrowing_surprise_csv(
         copied_registry_csv=external / "qra_event_registry_v2.csv",
         qrawatch_root=qrawatch_root,
     )
-    releases.extend(_release_rows_from_urls(extra_urls or [], cache_dir=raw_cache_dir))
+    url_list = [*BUILTIN_FETCH_URLS, *(extra_urls or [])]
+    releases.extend(_release_rows_from_urls(dict.fromkeys(url_list), cache_dir=raw_cache_dir))
 
     records: list[dict[str, object]] = []
     evidence_by_quarter: dict[str, str] = {}
+    estimates_by_release_month: dict[str, list[EstimateParse]] = {}
     for release in releases:
-        record, evidence = _record_from_release(release)
+        record, evidence, estimates = _record_from_release(release)
         records.append(record)
         if evidence:
             evidence_by_quarter[str(record["quarter"])] = evidence
+        month = _release_month(record["release_date"])
+        if month:
+            estimates_by_release_month.setdefault(month, []).extend(estimates)
 
     frame = pd.DataFrame(records, columns=QRA_REQUIRED_COLUMNS)
     frame = frame.drop_duplicates(subset=["event_id", "quarter", "source_url"], keep="last")
+    frame = _apply_independent_prior_parses(frame, estimates_by_release_month=estimates_by_release_month)
     frame = frame.sort_values(["release_date", "quarter"], kind="stable").reset_index(drop=True)
     out_path = Path(out_csv)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -497,9 +588,8 @@ def build_qra_borrowing_surprise_csv(
 
 def _build_notes(frame: pd.DataFrame, evidence_by_quarter: dict[str, str], manifest: dict[str, object]) -> str:
     quality = frame["parse_quality"].value_counts(dropna=False).to_dict()
-    gaps = frame.loc[frame["parse_quality"].ne("verified"), ["quarter", "parse_quality", "note"]]
-    spot_quarters = ["2014Q3", "2020Q2", "2023Q3"]
-    spot_quarters.extend([q for q in frame["quarter"].dropna().tail(2).astype(str).tolist() if q not in spot_quarters])
+    gaps = frame.loc[frame["parse_quality"].eq("missing"), ["quarter", "parse_quality", "note"]]
+    spot_quarters = [q for q in sorted(MANUALLY_VERIFIED_QUARTERS) if q in set(frame["quarter"].astype(str))]
     lines = [
         "# QRA Net Marketable Borrowing Surprise Construction",
         "",
@@ -512,7 +602,13 @@ def _build_notes(frame: pd.DataFrame, evidence_by_quarter: dict[str, str], manif
         f"Rows: {len(frame)}",
         f"Parse quality: {quality}",
         "",
-        "Known gaps: qrawatch's processed map starts at 2010Q1, so 2009 is not included in this first pass. Prior TGA assumptions are blank except where the Treasury page exposes a cash-balance assumption table in parseable text.",
+        "Known gaps and caveats: qrawatch's processed map starts at 2010Q1, so 2009 is not included in this first pass. The earlier 2021Q4/2022Q1 current-quarter gap has been fixed by direct Treasury fetches for `jy0452` and `jy0575`. Prior TGA assumptions are blank except where the prior Treasury release exposes a parseable forward estimate or cash-balance table.",
+        "",
+        "Registry alignment caveat: qrawatch event IDs point to the correct physical refunding release, but its registry quarter labels diverge from the current-quarter borrowing-estimate label for 2021+ events. This CSV's `quarter` is always the quarter covered by the current-quarter borrowing estimate.",
+        "",
+        "Definition caveat for 2025+ releases: the headline revision is used, not Treasury's separate cash-adjusted figure that excludes beginning-of-quarter cash-balance changes. Use the TGA-assumption columns for sensitivity work where populated.",
+        "",
+        "Prior-estimate construction: `prior_source=parsed_prior_release` means the prior value was independently parsed from the previous Treasury release's forward estimate for the same quarter; `derived_from_revision` means it remains announced minus Treasury's stated revision.",
         "",
         "## Spot Checks",
         "",

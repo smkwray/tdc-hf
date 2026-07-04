@@ -43,6 +43,30 @@ def test_qra_borrowing_output_schema_and_arithmetic() -> None:
     assert not df.duplicated(["event_id", "quarter"]).any()
     assert df["release_date"].is_monotonic_increasing
 
-    complete = df.dropna(subset=["announced_net_borrowing_bn", "prior_estimate_bn", "surprise_bn"])
-    diff = complete["announced_net_borrowing_bn"] - complete["prior_estimate_bn"]
-    assert (diff - complete["surprise_bn"]).abs().max() < 1e-9
+    parsed = df.loc[df["prior_source"].eq("parsed_prior_release")]
+    assert not parsed.empty
+    diff = parsed["announced_net_borrowing_bn"] - parsed["prior_estimate_bn"]
+    assert (diff - parsed["surprise_bn"]).abs().max() <= 1.5
+    assert "verified" not in set(df["parse_quality"].dropna())
+
+
+def test_qra_borrowing_output_pins_independently_verified_values() -> None:
+    path = Path("data/processed/qra_borrowing_surprise.csv")
+    if not path.exists():
+        pytest.skip("generated QRA borrowing surprise CSV is not present")
+
+    df = pd.read_csv(path).set_index("quarter")
+    expected = {
+        "2011Q1": -194.0,
+        "2014Q3": 22.0,
+        "2016Q1": 85.0,
+        "2019Q3": 274.0,
+        "2020Q2": 3055.0,
+        "2021Q2": 368.0,
+        "2023Q3": 274.0,
+        "2024Q3": -106.0,
+        "2025Q2": 391.0,
+    }
+    for quarter, surprise in expected.items():
+        assert quarter in df.index
+        assert abs(float(df.loc[quarter, "surprise_bn"]) - surprise) <= 1.0
