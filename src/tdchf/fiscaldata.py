@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -57,8 +58,17 @@ def fiscaldata_url(
 
 
 def fetch_fiscaldata_page(url: str) -> dict[str, Any]:
-    with urlopen(url, timeout=90) as response:
-        return json.loads(response.read().decode("utf-8"))
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urlopen(url, timeout=90) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            last_error = exc
+            if attempt == 2:
+                break
+            time.sleep(2**attempt)
+    raise RuntimeError(f"FiscalData request failed after retries: {url}") from last_error
 
 
 def iter_fiscaldata_rows(

@@ -9,6 +9,7 @@ from .indicators import aggregate_levels_to_monthly, level_change_to_monthly_flo
 FRED_OUTCOME_SERIES = [
     "DPSACBM027SBOG",
     "DPSACBM027NBOG",
+    "DPSACBW027NBOG",
     "DPSACBW027SBOG",
     "DPSDCBW027SBOG",
     "LTDACBW027SBOG",
@@ -54,7 +55,7 @@ def build_monthly_outcomes_from_fred_frame(df: pd.DataFrame) -> tuple[pd.DataFra
     out = pd.DataFrame()
     meta: list[dict[str, object]] = []
 
-    broad_col = _first_available(df, ["DPSACBM027SBOG", "DPSACBM027NBOG", "DPSACBW027SBOG"])
+    broad_col = _first_available(df, ["DPSACBM027SBOG", "DPSACBM027NBOG", "DPSACBW027NBOG", "DPSACBW027SBOG"])
     if broad_col:
         out["broad_deposits"] = level_change_to_monthly_flow(df[broad_col].rename("broad_deposits"))
         out["broad_deposits_level"] = aggregate_levels_to_monthly(df[broad_col].rename("broad_deposits_level"))

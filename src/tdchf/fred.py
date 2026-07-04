@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import StringIO
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 
 import pandas as pd
@@ -43,7 +44,9 @@ def fetch_fred_series(series_id: str) -> pd.Series:
 def fetch_fred_series_many(series_ids: list[str]) -> pd.DataFrame:
     if not series_ids:
         raise ValueError("At least one FRED series id is required")
-    frames = [fetch_fred_series(series_id) for series_id in series_ids]
+    max_workers = min(12, len(series_ids))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        frames = list(executor.map(fetch_fred_series, series_ids))
     out = pd.concat(frames, axis=1, sort=False).sort_index()
     out.index.name = "date"
     return out
