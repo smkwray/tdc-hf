@@ -26,6 +26,7 @@ from .pipeline import run_monthly_proxy_pipeline
 from .pretrend import add_pretrend_controls_csv
 from .qra_borrowing import build_qra_borrowing_surprise_csv
 from .qra_event_lp import run_qra_event_lp_csv
+from .reabsorption import run_reabsorption_halflife_csv
 from .readiness import readiness_payload
 from .reporting import (
     compare_iv_robustness_summaries,
@@ -383,6 +384,18 @@ def build_parser() -> argparse.ArgumentParser:
     disb.add_argument("--crosswalk", default="data/processed/dts_category_crosswalk.csv")
     disb.add_argument("--out", default="data/processed/dts_disbursement_lp_estimates.csv")
     disb.add_argument("--readout", default="data/processed/dts_disbursement_lp_readout.md")
+
+    reabs = subparsers.add_parser("run-reabsorption-halflife", help="Estimate state-conditional disbursement reabsorption half-lives")
+    reabs.add_argument("--flows", default="data/processed/dts_weekly_flow_decomposition.csv")
+    reabs.add_argument("--calendar", default="data/processed/fiscal_calendar_weekly.csv")
+    reabs.add_argument("--weekly-panel", default="data/processed/tdc_weekly_channel_panel.csv")
+    reabs.add_argument("--raw-state", default="data/raw/fred_reabsorption_state_sources.csv")
+    reabs.add_argument("--state", default="data/processed/reabsorption_state_weekly.csv")
+    reabs.add_argument("--out", default="data/processed/reabsorption_halflife_estimates.csv")
+    reabs.add_argument("--readout", default="data/processed/reabsorption_halflife_readout.md")
+    reabs.add_argument("--contract", default="data/processed/reabsorption_state_contract.csv")
+    reabs.add_argument("--halflife-bootstrap-reps", type=int, default=999)
+    reabs.add_argument("--interaction-bootstrap-reps", type=int, default=999)
     return parser
 
 
@@ -830,6 +843,22 @@ def main(argv: list[str] | None = None) -> int:
             gdp_csv=args.gdp,
             out_csv=args.out,
             readout_md=args.readout,
+        )
+        print(json.dumps(report, indent=2))
+        return 0
+
+    if args.command == "run-reabsorption-halflife":
+        report = run_reabsorption_halflife_csv(
+            flows_csv=args.flows,
+            calendar_csv=args.calendar,
+            weekly_panel_csv=args.weekly_panel,
+            raw_state_csv=args.raw_state,
+            state_csv=args.state,
+            estimates_csv=args.out,
+            readout_md=args.readout,
+            contract_csv=args.contract,
+            halflife_bootstrap_reps=args.halflife_bootstrap_reps,
+            interaction_bootstrap_reps=args.interaction_bootstrap_reps,
         )
         print(json.dumps(report, indent=2))
         return 0
