@@ -23,6 +23,7 @@ from .model_panel import assemble_model_panel_csv
 from .outcomes import FRED_OUTCOME_SERIES, build_monthly_outcomes_csv
 from .pipeline import run_monthly_proxy_pipeline
 from .pretrend import add_pretrend_controls_csv
+from .qra_borrowing import build_qra_borrowing_surprise_csv
 from .readiness import readiness_payload
 from .reporting import (
     compare_iv_robustness_summaries,
@@ -351,6 +352,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     methods = subparsers.add_parser("write-method-status", help="Write temporal-disaggregation method status CSV")
     methods.add_argument("--out", required=True, help="Output method status CSV")
+
+    qra_borrowing = subparsers.add_parser("build-qra-borrowing-surprise", help="Build QRA net marketable borrowing surprise series")
+    qra_borrowing.add_argument("--qrawatch-root", default="../qrawatch", help="Read-only qrawatch repo root")
+    qra_borrowing.add_argument("--external-dir", default="data/external/qrawatch", help="Copied qrawatch inputs with provenance")
+    qra_borrowing.add_argument("--raw-cache-dir", default="data/raw/qra_borrowing", help="Fetched Treasury release cache")
+    qra_borrowing.add_argument("--out", default="data/processed/qra_borrowing_surprise.csv", help="Output CSV")
+    qra_borrowing.add_argument("--notes", default="data/processed/qra_borrowing_surprise_notes.md", help="Construction note")
+    qra_borrowing.add_argument("--extra-url", action="append", default=[], help="Additional Treasury borrowing-estimate release URL")
     return parser
 
 
@@ -770,6 +779,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "write-method-status":
         report = write_method_status_csv(args.out)
+        print(json.dumps(report, indent=2))
+        return 0
+
+    if args.command == "build-qra-borrowing-surprise":
+        report = build_qra_borrowing_surprise_csv(
+            qrawatch_root=args.qrawatch_root,
+            external_dir=args.external_dir,
+            raw_cache_dir=args.raw_cache_dir,
+            out_csv=args.out,
+            notes_md=args.notes,
+            extra_urls=args.extra_url,
+        )
         print(json.dumps(report, indent=2))
         return 0
 
