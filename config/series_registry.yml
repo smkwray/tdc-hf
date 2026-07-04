@@ -1,0 +1,66 @@
+quarterly_anchors:
+  fed_tsy:
+    fred: BOGZ1FU713061103Q
+    source: Z.1
+    sign: positive_absorption
+  banks_tsy:
+    fred: BOGZ1FU763061100Q
+    source: Z.1
+    sign: positive_absorption
+  row_tsy:
+    fred: BOGZ1FU263061105Q
+    source: Z.1
+    sign: positive_absorption
+  toc:
+    fred: BOGZ1FU313024000Q
+    source: Z.1
+    sign: subtract_in_identity
+
+monthly_indicators:
+  fed_tsy:
+    preferred: H4.1 TREAST monthly end-of-month change
+    fallback: SOMA CUSIP-level monthly change
+    benchmark_method: additive_quarterly_residual_spread
+  banks_tsy:
+    preferred: H.8 TNMACBM027NBOG monthly change post-2009
+    fallback: H.8 USGSEC or TASACBW027NBOG aggregated to month
+    benchmark_method: calibrated_litterman_later
+  row_tsy:
+    preferred: TIC monthly Treasury net purchases
+    benchmark_method: calibrated_litterman_later
+  minus_toc:
+    preferred: DTS operating cash month-end change, multiplied by -1 in identity
+    fallback: H4.1 WTREGEN/WDTGAL
+    benchmark_method: additive_quarterly_residual_spread
+  fed_remit_positive:
+    preferred: DTS Federal Reserve Earnings deposits
+    fallback: H4.1 RESPPLLOPNWW positive-only rule
+    benchmark_method: additive_quarterly_residual_spread
+
+monthly_outcomes:
+  deposits:
+    preferred_definition: domestic_non_large_time_deposits
+    derived: DPSDCBW027SBOG - LTDACBW027SBOG
+    transform: month_end_level_diff_then_difference
+  broad_deposits:
+    fred_preferred: DPSACBM027SBOG
+    transform: month_end_level_diff
+  domestic_deposits:
+    fred_preferred: DPSDCBW027SBOG
+    transform: month_end_level_diff
+  large_time_deposits:
+    fred_preferred: LTDACBW027SBOG
+    transform: month_end_level_diff
+  non_large_time_deposits:
+    derived: broad_deposits - large_time_deposits
+  domestic_non_large_time_deposits:
+    derived: domestic_deposits - large_time_deposits
+  bank_credit:
+    fred_preferred: TOTBKCR
+    transform: month_end_level_diff
+  reserves_level:
+    fred_preferred: WRESBAL
+    transform: monthly_mean
+  onrrp_level:
+    fred_preferred: RRPONTSYD
+    transform: monthly_mean

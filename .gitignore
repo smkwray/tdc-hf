@@ -1,0 +1,57 @@
+# macOS / OS
+.DS_Store
+
+# Environment
+.env
+
+# Claude auto-orientation stub (AI-tool refs; must stay private)
+CLAUDE.md
+
+# Agent orchestration (prompts, handoff, delegates)
+do/
+
+# Internal docs not for the repo
+docs/
+docs/*prompt*.md
+
+# Plans
+*.plan.md
+plan.md
+plans/
+
+# Data and generated outputs (project-local working state)
+/data/
+/output/
+/outputs/
+/var/
+/tmp/
+/logs/
+
+# Python / build caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+dist/
+build/
+
+# Editor state
+.vscode/
+.idea/
+
+# Local archives / logs
+*.zip
+*.tar
+*.tar.gz
+*.log
+
+# .githooks/ is INTENTIONALLY NOT IGNORED — it ships the pre-commit hook
+# that other contributors install with `git config core.hooksPath .githooks`

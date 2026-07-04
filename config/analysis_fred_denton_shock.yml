@@ -1,0 +1,2001 @@
+root: ..
+report: data/processed/analysis_fred_denton_shock_report.json
+
+steps:
+  - id: download_hf_fred
+    action: download-hf-fred
+    out: data/raw/fred_hf_sources.csv
+
+  - id: build_hf_indicators
+    action: build-fred-indicators
+    raw: data/raw/fred_hf_sources.csv
+    out: data/processed/fred_monthly_indicators.csv
+    metadata: data/processed/fred_monthly_indicator_metadata.csv
+
+  - id: download_dts_fiscaldata
+    action: download-dts-fiscaldata
+    out_dir: data/raw/fiscaldata
+    start_date: "2005-01-01"
+    page_size: 10000
+
+  - id: build_dts_fiscal_indicators
+    action: build-dts-fiscal-indicators
+    operating_cash_balance: data/raw/fiscaldata/dts_operating_cash_balance.csv
+    fed_remit: data/raw/fiscaldata/dts_federal_reserve_earnings.csv
+    out: data/processed/dts_fiscal_monthly_indicators.csv
+    metadata: data/processed/dts_fiscal_monthly_indicator_metadata.csv
+
+  - id: build_dts_transaction_indicators
+    action: build-dts-transaction-indicators
+    transactions: data/raw/fiscaldata/dts_deposits_withdrawals_operating_cash.csv
+    out: data/processed/dts_transaction_monthly_indicators.csv
+    metadata: data/processed/dts_transaction_monthly_indicator_metadata.csv
+
+  - id: merge_fred_dts_indicators
+    action: merge-indicators
+    inputs:
+      - data/processed/fred_monthly_indicators.csv
+      - data/processed/dts_fiscal_monthly_indicators.csv
+      - data/processed/dts_transaction_monthly_indicators.csv
+    out: data/processed/fred_dts_monthly_indicators.csv
+
+  - id: build_proxy
+    action: build-proxy
+    monthly_indicators: data/processed/fred_dts_monthly_indicators.csv
+    benchmark_method: denton
+    method_label: indicator_denton_headline
+    out_dir: data/processed/fred_denton_proxy
+
+  - id: build_envelope
+    action: build-envelope
+    monthly_indicators: data/processed/fred_dts_monthly_indicators.csv
+    out_dir: data/processed/fred_envelope
+
+  - id: summarize_proxy
+    action: summarize-run
+    run_dir: data/processed/fred_denton_proxy
+    out_json: data/processed/fred_denton_proxy/run_summary.json
+    out_md: data/processed/fred_denton_proxy/run_summary.md
+
+  - id: method_status
+    action: write-method-status
+    out: data/processed/temporal_disaggregation_method_status.csv
+
+  - id: build_weekly_state
+    action: build-weekly-state
+    raw: data/raw/fred_hf_sources.csv
+    out: data/processed/tdc_weekly_state.csv
+
+  - id: download_outcome_fred
+    action: download-outcome-fred
+    out: data/raw/fred_outcome_sources.csv
+
+  - id: build_outcomes
+    action: build-outcomes
+    raw: data/raw/fred_outcome_sources.csv
+    out: data/processed/fred_monthly_outcomes.csv
+    metadata: data/processed/fred_monthly_outcome_metadata.csv
+
+  - id: build_weekly_outcomes
+    action: build-weekly-state
+    raw: data/raw/fred_outcome_sources.csv
+    out: data/processed/fred_weekly_outcomes.csv
+
+  - id: build_weekly_channel_panel
+    action: build-weekly-channel-panel
+    inputs:
+      - data/processed/tdc_weekly_state.csv
+      - data/processed/fred_weekly_outcomes.csv
+    out: data/processed/tdc_weekly_channel_panel.csv
+
+  - id: weekly_tga_channel_lp
+    action: run-lp
+    data: data/processed/tdc_weekly_channel_panel.csv
+    shock: d_tga_wednesday
+    outcomes:
+      - d_onrrp
+      - d_reserves
+      - d_bank_treasury_agency
+      - d_domestic_non_large_time_deposits
+      - d_broad_deposits
+      - d_retail_mmf
+      - d_institutional_mmf
+      - d_total_mmf
+    controls:
+      - lag_d_tga_wednesday
+      - lag_d_onrrp
+      - lag_d_reserves
+      - yield_2y
+      - yield_10y
+    horizons: [0, 1, 2, 4, 8, 12]
+    out: data/processed/weekly_tga_channel_lp.csv
+
+  - id: weekly_fed_holdings_channel_lp
+    action: run-lp
+    data: data/processed/tdc_weekly_channel_panel.csv
+    shock: d_fed_treasury_holdings
+    outcomes:
+      - d_onrrp
+      - d_reserves
+      - d_bank_treasury_agency
+      - d_domestic_non_large_time_deposits
+      - d_broad_deposits
+      - d_retail_mmf
+      - d_institutional_mmf
+      - d_total_mmf
+    controls:
+      - lag_d_fed_treasury_holdings
+      - lag_d_onrrp
+      - lag_d_reserves
+      - yield_2y
+      - yield_10y
+    horizons: [0, 1, 2, 4, 8, 12]
+    out: data/processed/weekly_fed_holdings_channel_lp.csv
+
+  - id: assemble_complete_panel
+    action: assemble-panel
+    inputs:
+      - data/processed/fred_denton_proxy/tdc_monthly_proxy.csv
+      - data/processed/fred_monthly_outcomes.csv
+    lags:
+      - deposits
+      - bank_credit
+    require:
+      - tdc_monthly
+      - deposits
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    out: data/processed/fred_denton_model_panel_complete.csv
+
+  - id: summarize_complete_panel
+    action: summarize-panel
+    data: data/processed/fred_denton_model_panel_complete.csv
+    out: data/processed/fred_denton_model_panel_summary.csv
+
+  - id: residual_tdc_shock
+    action: build-residual-shock
+    data: data/processed/fred_denton_model_panel_complete.csv
+    target: tdc_monthly
+    predictors:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    min_train_obs: 36
+    out: data/processed/fred_denton_complete_residual_shock.csv
+
+  - id: reduced_form_lp
+    action: run-lp
+    data: data/processed/fred_denton_complete_residual_shock.csv
+    shock: tdc_monthly_residual_z
+    outcomes:
+      - deposits
+      - large_time_deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - closed_end_residential_loans
+      - cre_multifamily_loans
+      - cre_nonfarm_nonresidential_loans
+      - loans_to_nondepository_financial_institutions
+      - d_baa_aaa_spread
+      - d_investment_grade_oas
+      - d_high_yield_oas
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - auto_loans
+      - other_consumer_loans
+      - closed_end_residential_loans
+      - heloc_loans
+      - construction_land_development_loans
+      - cre_multifamily_loans
+      - cre_nonfarm_nonresidential_loans
+      - loans_to_nondepository_financial_institutions
+      - d_baa_aaa_spread
+      - d_investment_grade_oas
+      - d_high_yield_oas
+      - d_term_spread_10y_2y
+      - d_term_spread_10y_3m
+      - d_effr_iorb_spread
+      - d_sofr_iorb_spread
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_denton_complete_reduced_form_lp.csv
+
+  - id: tga_rebuild_shock
+    action: build-tga-rebuild-shock
+    data: data/processed/fred_dts_monthly_indicators.csv
+    target: minus_toc
+    predictors:
+      - fed_tsy
+      - banks_tsy
+      - fed_remit_positive
+    min_train_obs: 36
+    out: data/processed/tga_rebuild_shock.csv
+
+  - id: long_tga_rebuild_shock
+    action: build-named-residual-shock
+    data: data/processed/fred_dts_monthly_indicators.csv
+    target: minus_toc
+    predictors:
+      - fed_tsy
+      - fed_remit_positive
+    residual_column: tga_long_surprise
+    fitted_column: tga_long_expected
+    z_column: tga_long_surprise_z
+    min_train_obs: 36
+    month_dummies: true
+    trend: true
+    out: data/processed/long_tga_rebuild_shock.csv
+
+  - id: fiscal_flow_shock
+    action: build-named-residual-shock
+    data: data/processed/fred_dts_monthly_indicators.csv
+    target: net_tga_withdrawals
+    predictors:
+      - fed_tsy
+      - banks_tsy
+      - fed_remit_positive
+    residual_column: fiscal_flow_surprise
+    fitted_column: fiscal_flow_expected
+    z_column: fiscal_flow_surprise_z
+    min_train_obs: 12
+    month_dummies: true
+    trend: true
+    out: data/processed/fiscal_flow_shock.csv
+
+  - id: tax_deposit_shock
+    action: build-named-residual-shock
+    data: data/processed/fred_dts_monthly_indicators.csv
+    target: dts_tax_deposits
+    predictors:
+      - fed_tsy
+      - banks_tsy
+      - fed_remit_positive
+    residual_column: tax_deposit_surprise
+    fitted_column: tax_deposit_expected
+    z_column: tax_deposit_surprise_z
+    min_train_obs: 36
+    month_dummies: true
+    trend: true
+    out: data/processed/tax_deposit_shock.csv
+
+  - id: core_payment_shock
+    action: build-named-residual-shock
+    data: data/processed/fred_dts_monthly_indicators.csv
+    target: dts_core_payment_withdrawals
+    predictors:
+      - fed_tsy
+      - banks_tsy
+      - fed_remit_positive
+    residual_column: core_payment_surprise
+    fitted_column: core_payment_expected
+    z_column: core_payment_surprise_z
+    min_train_obs: 36
+    month_dummies: true
+    trend: true
+    out: data/processed/core_payment_shock.csv
+
+  - id: auction_size_shock
+    action: build-auction-size-shock
+    raw: ../qrawatch/data/raw/fiscaldata/auctions_query.csv
+    out: data/processed/auction_size_shock.csv
+    date_column: issue_date
+    amount_column: offering_amt
+    tenor_column: security_term
+    min_train_obs: 12
+
+  - id: shock_bundle
+    action: build-shock-bundle
+    inputs:
+      - data/processed/fred_denton_complete_residual_shock.csv
+      - data/processed/tga_rebuild_shock.csv
+      - data/processed/long_tga_rebuild_shock.csv
+      - data/processed/fiscal_flow_shock.csv
+      - data/processed/tax_deposit_shock.csv
+      - data/processed/core_payment_shock.csv
+      - data/processed/auction_size_shock.csv
+    columns:
+      - tdc_monthly_residual
+      - tdc_monthly_residual_z
+      - tga_rebuild_surprise
+      - tga_rebuild_surprise_z
+      - tga_long_surprise
+      - tga_long_surprise_z
+      - fiscal_flow_surprise
+      - fiscal_flow_surprise_z
+      - tax_deposit_surprise
+      - tax_deposit_surprise_z
+      - core_payment_surprise
+      - core_payment_surprise_z
+      - auction_size_surprise
+      - auction_size_surprise_z
+      - auction_bill_surprise
+      - auction_bill_surprise_z
+      - auction_note_surprise
+      - auction_note_surprise_z
+      - auction_bond_surprise
+      - auction_bond_surprise_z
+      - auction_coupon_surprise
+      - auction_coupon_surprise_z
+    out: data/processed/fred_denton_shock_bundle.csv
+
+  - id: assemble_shock_panel
+    action: assemble-panel
+    inputs:
+      - data/processed/fred_denton_model_panel_complete.csv
+      - data/processed/fred_denton_shock_bundle.csv
+    require:
+      - tdc_monthly
+      - deposits
+      - tga_rebuild_surprise_z
+      - auction_size_surprise_z
+    out: data/processed/fred_denton_model_panel_with_shocks.csv
+
+  - id: summarize_shock_panel
+    action: summarize-panel
+    data: data/processed/fred_denton_model_panel_with_shocks.csv
+    out: data/processed/fred_denton_model_panel_with_shocks_summary.csv
+
+  - id: assemble_long_tga_panel
+    action: assemble-panel
+    inputs:
+      - data/processed/fred_denton_model_panel_complete.csv
+      - data/processed/fred_denton_shock_bundle.csv
+    require:
+      - tdc_monthly
+      - deposits
+      - tga_long_surprise_z
+    out: data/processed/fred_denton_model_panel_with_long_tga_shock.csv
+
+  - id: summarize_long_tga_panel
+    action: summarize-panel
+    data: data/processed/fred_denton_model_panel_with_long_tga_shock.csv
+    out: data/processed/fred_denton_model_panel_with_long_tga_shock_summary.csv
+
+  - id: assemble_fiscal_flow_shock_panel
+    action: assemble-panel
+    inputs:
+      - data/processed/fred_denton_model_panel_with_shocks.csv
+    require:
+      - tdc_monthly
+      - deposits
+      - tga_rebuild_surprise_z
+      - fiscal_flow_surprise_z
+      - auction_size_surprise_z
+    out: data/processed/fred_denton_model_panel_with_fiscal_flow_shocks.csv
+
+  - id: summarize_fiscal_flow_shock_panel
+    action: summarize-panel
+    data: data/processed/fred_denton_model_panel_with_fiscal_flow_shocks.csv
+    out: data/processed/fred_denton_model_panel_with_fiscal_flow_shocks_summary.csv
+
+  - id: assemble_category_flow_shock_panel
+    action: assemble-panel
+    inputs:
+      - data/processed/fred_denton_model_panel_with_shocks.csv
+    require:
+      - tdc_monthly
+      - deposits
+      - tga_rebuild_surprise_z
+      - tax_deposit_surprise_z
+      - core_payment_surprise_z
+      - auction_size_surprise_z
+    out: data/processed/fred_denton_model_panel_with_category_flow_shocks.csv
+
+  - id: summarize_category_flow_shock_panel
+    action: summarize-panel
+    data: data/processed/fred_denton_model_panel_with_category_flow_shocks.csv
+    out: data/processed/fred_denton_model_panel_with_category_flow_shocks_summary.csv
+
+  - id: add_calendar_controls
+    action: add-calendar-controls
+    data: data/processed/fred_denton_model_panel_with_shocks.csv
+    out: data/processed/fred_denton_model_panel_with_calendar_controls.csv
+
+  - id: add_pretrend_controls
+    action: add-pretrend-controls
+    data: data/processed/fred_denton_model_panel_with_shocks.csv
+    columns:
+      - deposits
+      - bank_credit
+    lags: [2, 3]
+    windows: [3, 6]
+    out: data/processed/fred_denton_model_panel_with_pretrend_controls.csv
+
+  - id: add_long_tga_pretrend_controls
+    action: add-pretrend-controls
+    data: data/processed/fred_denton_model_panel_with_long_tga_shock.csv
+    columns:
+      - deposits
+      - bank_credit
+    lags: [2, 3]
+    windows: [3, 6]
+    out: data/processed/fred_denton_long_tga_panel_with_pretrend_controls.csv
+
+  - id: add_long_tga_calendar_controls
+    action: add-calendar-controls
+    data: data/processed/fred_denton_long_tga_panel_with_pretrend_controls.csv
+    out: data/processed/fred_denton_long_tga_panel_with_calendar_controls.csv
+
+  - id: add_long_tga_factor_controls
+    action: add-factor-controls
+    data: data/processed/fred_denton_long_tga_panel_with_pretrend_controls.csv
+    columns:
+      - deposits
+      - broad_deposits
+      - large_time_deposits
+      - bank_credit
+      - reserves
+      - retail_mmf
+      - yield_2y
+      - yield_10y
+    n_factors: 3
+    lag: 1
+    out: data/processed/fred_denton_long_tga_panel_with_factor_controls.csv
+
+  - id: add_category_pretrend_controls
+    action: add-pretrend-controls
+    data: data/processed/fred_denton_model_panel_with_category_flow_shocks.csv
+    columns:
+      - deposits
+      - bank_credit
+    lags: [2, 3]
+    windows: [3, 6]
+    out: data/processed/fred_denton_category_panel_with_pretrend_controls.csv
+
+  - id: shock_first_stage
+    action: first-stage
+    data: data/processed/fred_denton_model_panel_with_shocks.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - auction_size_surprise_z
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    out: data/processed/fred_denton_shock_first_stage.csv
+
+  - id: fiscal_flow_first_stage
+    action: first-stage
+    data: data/processed/fred_denton_model_panel_with_fiscal_flow_shocks.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - fiscal_flow_surprise_z
+      - auction_size_surprise_z
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    out: data/processed/fred_denton_fiscal_flow_first_stage.csv
+
+  - id: category_flow_first_stage
+    action: first-stage
+    data: data/processed/fred_denton_model_panel_with_category_flow_shocks.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - tax_deposit_surprise_z
+      - core_payment_surprise_z
+      - auction_size_surprise_z
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    out: data/processed/fred_denton_category_flow_first_stage.csv
+
+  - id: pretrend_first_stage
+    action: first-stage
+    data: data/processed/fred_denton_model_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - auction_size_surprise_z
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    out: data/processed/fred_denton_pretrend_first_stage.csv
+
+  - id: headline_tga_pretrend_first_stage
+    action: first-stage
+    data: data/processed/fred_denton_model_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    out: data/processed/fred_denton_headline_tga_pretrend_first_stage.csv
+
+  - id: long_tga_pretrend_first_stage
+    action: first-stage
+    data: data/processed/fred_denton_long_tga_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_long_surprise_z
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    out: data/processed/fred_denton_long_tga_pretrend_first_stage.csv
+
+  - id: long_tga_factor_first_stage
+    action: first-stage
+    data: data/processed/fred_denton_long_tga_panel_with_factor_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_long_surprise_z
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+      - factor1_lag1
+      - factor2_lag1
+      - factor3_lag1
+    out: data/processed/fred_denton_long_tga_factor_first_stage.csv
+
+  - id: shock_lp_iv
+    action: run-lp-iv
+    data: data/processed/fred_denton_model_panel_with_shocks.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - auction_size_surprise_z
+    outcomes:
+      - deposits
+      - large_time_deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - closed_end_residential_loans
+      - cre_multifamily_loans
+      - cre_nonfarm_nonresidential_loans
+      - loans_to_nondepository_financial_institutions
+      - d_baa_aaa_spread
+      - d_investment_grade_oas
+      - d_high_yield_oas
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - auto_loans
+      - other_consumer_loans
+      - closed_end_residential_loans
+      - heloc_loans
+      - construction_land_development_loans
+      - cre_multifamily_loans
+      - cre_nonfarm_nonresidential_loans
+      - loans_to_nondepository_financial_institutions
+      - d_baa_aaa_spread
+      - d_investment_grade_oas
+      - d_high_yield_oas
+      - d_term_spread_10y_2y
+      - d_term_spread_10y_3m
+      - d_effr_iorb_spread
+      - d_sofr_iorb_spread
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_denton_shock_lp_iv.csv
+
+  - id: headline_tga_pretrend_lp_iv
+    action: run-lp-iv
+    data: data/processed/fred_denton_model_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+    outcomes:
+      - deposits
+      - large_time_deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - auto_loans
+      - other_consumer_loans
+      - closed_end_residential_loans
+      - heloc_loans
+      - construction_land_development_loans
+      - cre_multifamily_loans
+      - cre_nonfarm_nonresidential_loans
+      - loans_to_nondepository_financial_institutions
+      - d_baa_aaa_spread
+      - d_investment_grade_oas
+      - d_high_yield_oas
+      - d_term_spread_10y_2y
+      - d_term_spread_10y_3m
+      - d_effr_iorb_spread
+      - d_sofr_iorb_spread
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_denton_headline_tga_pretrend_lp_iv.csv
+
+  - id: long_tga_pretrend_lp_iv
+    action: run-lp-iv
+    data: data/processed/fred_denton_long_tga_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_long_surprise_z
+    outcomes:
+      - deposits
+      - large_time_deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - auto_loans
+      - other_consumer_loans
+      - closed_end_residential_loans
+      - heloc_loans
+      - construction_land_development_loans
+      - cre_multifamily_loans
+      - cre_nonfarm_nonresidential_loans
+      - loans_to_nondepository_financial_institutions
+      - d_baa_aaa_spread
+      - d_investment_grade_oas
+      - d_high_yield_oas
+      - d_term_spread_10y_2y
+      - d_term_spread_10y_3m
+      - d_effr_iorb_spread
+      - d_sofr_iorb_spread
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_denton_long_tga_pretrend_lp_iv.csv
+
+  - id: long_tga_calendar_lp_iv
+    action: run-lp-iv
+    data: data/processed/fred_denton_long_tga_panel_with_calendar_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_long_surprise_z
+    outcomes:
+      - deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - closed_end_residential_loans
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+      - tax_month
+      - refund_season_month
+      - treasury_coupon_interest_month
+      - debt_ceiling_window
+      - crisis_window
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_denton_long_tga_calendar_lp_iv.csv
+
+  - id: long_tga_factor_lp_iv
+    action: run-lp-iv
+    data: data/processed/fred_denton_long_tga_panel_with_factor_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_long_surprise_z
+    outcomes:
+      - deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - closed_end_residential_loans
+      - d_baa_aaa_spread
+      - d_investment_grade_oas
+      - d_high_yield_oas
+      - d_term_spread_10y_2y
+      - d_term_spread_10y_3m
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+      - factor1_lag1
+      - factor2_lag1
+      - factor3_lag1
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_denton_long_tga_factor_lp_iv.csv
+
+  - id: iv_robustness
+    action: run-iv-robustness
+    data: data/processed/fred_denton_model_panel_with_shocks.csv
+    treatment: tdc_monthly
+    instrument_specs:
+      - both=tga_rebuild_surprise_z+auction_size_surprise_z
+      - tga_only=tga_rebuild_surprise_z
+      - auction_only=auction_size_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out_dir: output/tables/iv_robustness
+
+  - id: fiscal_flow_iv_robustness
+    action: run-iv-robustness
+    data: data/processed/fred_denton_model_panel_with_fiscal_flow_shocks.csv
+    treatment: tdc_monthly
+    instrument_specs:
+      - tga_flow=tga_rebuild_surprise_z+fiscal_flow_surprise_z
+      - flow_only=fiscal_flow_surprise_z
+      - all_three=tga_rebuild_surprise_z+fiscal_flow_surprise_z+auction_size_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out_dir: output/tables/fiscal_flow_iv_robustness
+
+  - id: category_flow_iv_robustness
+    action: run-iv-robustness
+    data: data/processed/fred_denton_model_panel_with_category_flow_shocks.csv
+    treatment: tdc_monthly
+    instrument_specs:
+      - tax_only=tax_deposit_surprise_z
+      - core_payment_only=core_payment_surprise_z
+      - tax_payment=tax_deposit_surprise_z+core_payment_surprise_z
+      - tga_tax_payment=tga_rebuild_surprise_z+tax_deposit_surprise_z+core_payment_surprise_z
+      - all_category=tga_rebuild_surprise_z+tax_deposit_surprise_z+core_payment_surprise_z+auction_size_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out_dir: output/tables/category_flow_iv_robustness
+
+  - id: iv_robustness_calendar
+    action: run-iv-robustness
+    data: data/processed/fred_denton_model_panel_with_calendar_controls.csv
+    treatment: tdc_monthly
+    instrument_specs:
+      - both=tga_rebuild_surprise_z+auction_size_surprise_z
+      - tga_only=tga_rebuild_surprise_z
+      - auction_only=auction_size_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - quarter_end_month
+      - tax_month
+      - april_tax_month
+      - corporate_tax_month
+      - refund_season_month
+      - treasury_coupon_interest_month
+      - major_benefit_payment_month
+      - fiscal_quarter_end_month
+      - year_end_month
+      - post_2008
+      - post_2020
+      - debt_ceiling_window
+      - crisis_window
+      - month_02
+      - month_03
+      - month_04
+      - month_05
+      - month_06
+      - month_07
+      - month_08
+      - month_09
+      - month_10
+      - month_11
+      - month_12
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out_dir: output/tables/iv_robustness_calendar
+
+  - id: iv_robustness_pretrend
+    action: run-iv-robustness
+    data: data/processed/fred_denton_model_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instrument_specs:
+      - both=tga_rebuild_surprise_z+auction_size_surprise_z
+      - tga_only=tga_rebuild_surprise_z
+      - auction_only=auction_size_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out_dir: output/tables/iv_robustness_pretrend
+
+  - id: long_tga_iv_robustness_pretrend
+    action: run-iv-robustness
+    data: data/processed/fred_denton_long_tga_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instrument_specs:
+      - long_tga=tga_long_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - closed_end_residential_loans
+      - cre_multifamily_loans
+      - cre_nonfarm_nonresidential_loans
+      - loans_to_nondepository_financial_institutions
+      - d_baa_aaa_spread
+      - d_investment_grade_oas
+      - d_high_yield_oas
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out_dir: output/tables/long_tga_iv_robustness_pretrend
+
+  - id: auction_bucket_iv_robustness
+    action: run-iv-robustness
+    data: data/processed/fred_denton_model_panel_with_shocks.csv
+    treatment: tdc_monthly
+    instrument_specs:
+      - auction_total=auction_size_surprise_z
+      - auction_bill=auction_bill_surprise_z
+      - auction_coupon=auction_coupon_surprise_z
+      - tga_bill=tga_rebuild_surprise_z+auction_bill_surprise_z
+      - tga_coupon=tga_rebuild_surprise_z+auction_coupon_surprise_z
+      - tga_bill_coupon=tga_rebuild_surprise_z+auction_bill_surprise_z+auction_coupon_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out_dir: output/tables/auction_bucket_iv_robustness
+
+  - id: headline_placebo_lp_iv
+    action: run-lp-iv-placebo
+    data: data/processed/fred_denton_model_panel_with_shocks.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - auction_size_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    horizons: [1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_denton_headline_placebo_lp_iv.csv
+
+  - id: headline_placebo_lp_iv_pretrend
+    action: run-lp-iv-placebo
+    data: data/processed/fred_denton_model_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - auction_size_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    horizons: [1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_denton_headline_placebo_lp_iv_pretrend.csv
+
+  - id: tga_only_placebo_lp_iv_pretrend
+    action: run-lp-iv-placebo
+    data: data/processed/fred_denton_model_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    horizons: [1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_denton_tga_only_placebo_lp_iv_pretrend.csv
+
+  - id: long_tga_placebo_lp_iv_pretrend
+    action: run-lp-iv-placebo
+    data: data/processed/fred_denton_long_tga_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_long_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    horizons: [1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_denton_long_tga_placebo_lp_iv_pretrend.csv
+
+  - id: long_tga_factor_placebo_lp_iv
+    action: run-lp-iv-placebo
+    data: data/processed/fred_denton_long_tga_panel_with_factor_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_long_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - closed_end_residential_loans
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+      - factor1_lag1
+      - factor2_lag1
+      - factor3_lag1
+    horizons: [1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_denton_long_tga_factor_placebo_lp_iv.csv
+
+  - id: category_placebo_lp_iv
+    action: run-lp-iv-placebo
+    data: data/processed/fred_denton_model_panel_with_category_flow_shocks.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - tax_deposit_surprise_z
+      - core_payment_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    horizons: [1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_denton_category_placebo_lp_iv.csv
+
+  - id: category_placebo_lp_iv_pretrend
+    action: run-lp-iv-placebo
+    data: data/processed/fred_denton_category_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - tax_deposit_surprise_z
+      - core_payment_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    horizons: [1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_denton_category_placebo_lp_iv_pretrend.csv
+
+  - id: compare_iv_calendar_controls
+    action: compare-iv-robustness
+    baseline: output/tables/iv_robustness/iv_robustness_summary.csv
+    controlled: output/tables/iv_robustness_calendar/iv_robustness_summary.csv
+    out_dir: output/tables/iv_robustness_calendar_comparison
+
+  - id: bootstrap_shock_lp_iv
+    action: bootstrap-lp-iv
+    data: data/processed/fred_denton_model_panel_with_shocks.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - auction_size_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    replications: 200
+    block_length: 6
+    seed: 20260426
+    out: data/processed/fred_denton_shock_lp_iv_bootstrap.csv
+
+  - id: bootstrap_headline_tga_pretrend_lp_iv
+    action: bootstrap-lp-iv
+    data: data/processed/fred_denton_model_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - closed_end_residential_loans
+      - cre_multifamily_loans
+      - cre_nonfarm_nonresidential_loans
+      - loans_to_nondepository_financial_institutions
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    replications: 200
+    block_length: 6
+    seed: 20260429
+    out: data/processed/fred_denton_headline_tga_pretrend_lp_iv_bootstrap.csv
+
+  - id: bootstrap_long_tga_pretrend_lp_iv
+    action: bootstrap-lp-iv
+    data: data/processed/fred_denton_long_tga_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_long_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - closed_end_residential_loans
+      - cre_multifamily_loans
+      - cre_nonfarm_nonresidential_loans
+      - loans_to_nondepository_financial_institutions
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    replications: 200
+    block_length: 6
+    seed: 20260430
+    out: data/processed/fred_denton_long_tga_pretrend_lp_iv_bootstrap.csv
+
+  - id: bootstrap_long_tga_factor_lp_iv
+    action: bootstrap-lp-iv
+    data: data/processed/fred_denton_long_tga_panel_with_factor_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_long_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - closed_end_residential_loans
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+      - factor1_lag1
+      - factor2_lag1
+      - factor3_lag1
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    replications: 200
+    block_length: 6
+    seed: 20260501
+    out: data/processed/fred_denton_long_tga_factor_lp_iv_bootstrap.csv
+
+  - id: bootstrap_fiscal_flow_lp_iv
+    action: bootstrap-lp-iv
+    data: data/processed/fred_denton_model_panel_with_fiscal_flow_shocks.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - fiscal_flow_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    replications: 200
+    block_length: 6
+    seed: 20260427
+    out: data/processed/fiscal_flow_lp_iv_bootstrap.csv
+
+  - id: bootstrap_category_flow_lp_iv
+    action: bootstrap-lp-iv
+    data: data/processed/fred_denton_model_panel_with_category_flow_shocks.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - tax_deposit_surprise_z
+      - core_payment_surprise_z
+    outcomes:
+      - deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    replications: 200
+    block_length: 6
+    seed: 20260428
+    out: data/processed/category_flow_lp_iv_bootstrap.csv
+
+  - id: long_tga_regime_exclusion_robustness
+    action: run-regime-exclusion-robustness
+    data: data/processed/fred_denton_long_tga_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_long_surprise_z
+    outcomes:
+      - deposits
+      - broad_deposits
+      - bank_credit
+      - onrrp
+      - total_mmf
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - closed_end_residential_loans
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out_dir: output/tables/long_tga_regime_exclusion
+
+  - id: du_anchor_variant_robustness
+    action: run-anchor-variant-robustness
+    tdcest_estimates: ../tdcest/data/processed/tdc_estimates.csv
+    monthly_indicators: data/processed/fred_dts_monthly_indicators.csv
+    base_panel: data/processed/fred_denton_long_tga_panel_with_pretrend_controls.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_long_surprise_z
+    outcomes:
+      - deposits
+      - broad_deposits
+      - bank_credit
+      - reserves
+      - onrrp
+      - retail_mmf
+      - institutional_mmf
+      - total_mmf
+      - commercial_industrial_loans
+      - consumer_loans
+      - credit_card_revolving_loans
+      - closed_end_residential_loans
+    bootstrap_outcomes:
+      - deposits
+      - bank_credit
+      - onrrp
+      - total_mmf
+      - commercial_industrial_loans
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    bootstrap_replications: 100
+    block_length: 6
+    seed: 20260502
+    out_dir: output/tables/du_anchor_variant_robustness
+
+  - id: headline_tga_accounting_decomposition
+    action: export-accounting-decomposition
+    lp: data/processed/fred_denton_headline_tga_pretrend_lp_iv.csv
+    horizons: [0, 3, 6, 12]
+    out_dir: output/tables/headline_tga_accounting_decomposition
+
+  - id: long_tga_accounting_decomposition
+    action: export-accounting-decomposition
+    lp: data/processed/fred_denton_long_tga_pretrend_lp_iv.csv
+    horizons: [0, 3, 6, 12]
+    out_dir: output/tables/long_tga_accounting_decomposition
+
+  - id: source_manifest
+    action: write-manifest
+    paths:
+      - data/raw/fred_hf_sources.csv
+      - data/raw/fiscaldata/dts_operating_cash_balance.csv
+      - data/raw/fiscaldata/dts_operating_cash_balance.csv.manifest.json
+      - data/raw/fiscaldata/dts_federal_reserve_earnings.csv
+      - data/raw/fiscaldata/dts_federal_reserve_earnings.csv.manifest.json
+      - data/raw/fiscaldata/dts_deposits_withdrawals_operating_cash.csv
+      - data/raw/fiscaldata/dts_deposits_withdrawals_operating_cash.csv.manifest.json
+      - data/raw/fred_outcome_sources.csv
+      - data/processed/fred_monthly_indicators.csv
+      - data/processed/dts_fiscal_monthly_indicators.csv
+      - data/processed/dts_transaction_monthly_indicators.csv
+      - data/processed/fred_dts_monthly_indicators.csv
+      - data/processed/fred_monthly_outcomes.csv
+      - data/processed/temporal_disaggregation_method_status.csv
+      - data/processed/tdc_weekly_state.csv
+      - data/processed/fred_weekly_outcomes.csv
+      - data/processed/fred_denton_proxy/tdc_monthly_proxy.csv
+      - data/processed/fred_denton_model_panel_complete.csv
+      - data/processed/auction_size_shock.csv
+      - data/processed/fred_denton_shock_bundle.csv
+      - data/processed/fred_denton_model_panel_with_shocks.csv
+      - data/processed/fred_denton_model_panel_with_long_tga_shock.csv
+      - data/processed/fred_denton_model_panel_with_fiscal_flow_shocks.csv
+      - data/processed/fred_denton_model_panel_with_category_flow_shocks.csv
+      - data/processed/fred_denton_model_panel_with_calendar_controls.csv
+      - data/processed/fred_denton_model_panel_with_pretrend_controls.csv
+      - data/processed/fred_denton_long_tga_panel_with_pretrend_controls.csv
+      - data/processed/fred_denton_long_tga_panel_with_calendar_controls.csv
+      - data/processed/fred_denton_long_tga_panel_with_factor_controls.csv
+      - data/processed/fred_denton_category_panel_with_pretrend_controls.csv
+      - data/processed/tdc_weekly_channel_panel.csv
+      - data/processed/weekly_tga_channel_lp.csv
+      - data/processed/weekly_fed_holdings_channel_lp.csv
+      - data/processed/fred_denton_shock_first_stage.csv
+      - data/processed/fred_denton_fiscal_flow_first_stage.csv
+      - data/processed/fred_denton_category_flow_first_stage.csv
+      - data/processed/fred_denton_pretrend_first_stage.csv
+      - data/processed/fred_denton_headline_tga_pretrend_first_stage.csv
+      - data/processed/fred_denton_long_tga_pretrend_first_stage.csv
+      - data/processed/fred_denton_long_tga_factor_first_stage.csv
+      - data/processed/fred_denton_shock_lp_iv.csv
+      - data/processed/fred_denton_headline_tga_pretrend_lp_iv.csv
+      - data/processed/fred_denton_long_tga_pretrend_lp_iv.csv
+      - data/processed/fred_denton_long_tga_calendar_lp_iv.csv
+      - data/processed/fred_denton_long_tga_factor_lp_iv.csv
+      - data/processed/fred_denton_shock_lp_iv_bootstrap.csv
+      - data/processed/fred_denton_headline_tga_pretrend_lp_iv_bootstrap.csv
+      - data/processed/fred_denton_long_tga_pretrend_lp_iv_bootstrap.csv
+      - data/processed/fred_denton_long_tga_factor_lp_iv_bootstrap.csv
+      - data/processed/fiscal_flow_lp_iv_bootstrap.csv
+      - data/processed/category_flow_lp_iv_bootstrap.csv
+      - data/processed/fred_denton_headline_placebo_lp_iv.csv
+      - data/processed/fred_denton_category_placebo_lp_iv.csv
+      - data/processed/fred_denton_headline_placebo_lp_iv_pretrend.csv
+      - data/processed/fred_denton_tga_only_placebo_lp_iv_pretrend.csv
+      - data/processed/fred_denton_long_tga_placebo_lp_iv_pretrend.csv
+      - data/processed/fred_denton_long_tga_factor_placebo_lp_iv.csv
+      - data/processed/fred_denton_category_placebo_lp_iv_pretrend.csv
+      - data/processed/long_tga_rebuild_shock.csv
+      - data/processed/fiscal_flow_shock.csv
+      - data/processed/tax_deposit_shock.csv
+      - data/processed/core_payment_shock.csv
+      - output/tables/iv_robustness/iv_robustness_summary.csv
+      - output/tables/iv_robustness_pretrend/iv_robustness_summary.csv
+      - output/tables/long_tga_iv_robustness_pretrend/iv_robustness_summary.csv
+      - output/tables/auction_bucket_iv_robustness/iv_robustness_summary.csv
+      - output/tables/fiscal_flow_iv_robustness/iv_robustness_summary.csv
+      - output/tables/category_flow_iv_robustness/iv_robustness_summary.csv
+      - output/tables/iv_robustness_calendar/iv_robustness_summary.csv
+      - output/tables/iv_robustness_calendar_comparison/iv_robustness_control_comparison.csv
+      - output/tables/headline_tga_pretrend/lp_peak_responses.csv
+      - output/tables/headline_tga_pretrend/first_stage_summary.csv
+      - output/tables/headline_tga_pretrend_publication/table_lp_iv_with_bootstrap.csv
+      - output/tables/headline_tga_pretrend_publication/table_peak_responses.csv
+      - output/tables/headline_tga_pretrend_publication/table_first_stage.csv
+      - output/tables/long_tga_pretrend/lp_peak_responses.csv
+      - output/tables/long_tga_pretrend/first_stage_summary.csv
+      - output/tables/long_tga_pretrend_publication/table_lp_iv_with_bootstrap.csv
+      - output/tables/long_tga_pretrend_publication/table_peak_responses.csv
+      - output/tables/long_tga_pretrend_publication/table_first_stage.csv
+      - output/tables/long_tga_factor/lp_peak_responses.csv
+      - output/tables/long_tga_factor/first_stage_summary.csv
+      - output/tables/long_tga_factor_publication/table_lp_iv_with_bootstrap.csv
+      - output/tables/long_tga_factor_publication/table_peak_responses.csv
+      - output/tables/long_tga_factor_publication/table_first_stage.csv
+      - output/tables/long_tga_factor_comparison/lp_result_comparison.csv
+      - output/tables/long_tga_calendar_comparison/lp_result_comparison.csv
+      - output/tables/thesis_claim_status/table_claim_status_h12.csv
+      - output/tables/thesis_claim_status/table_claim_status_short.csv
+      - output/figures/anchor_variant_forest/anchor_variant_h12_forest.png
+      - output/figures/anchor_variant_short_run/anchor_variant_short_run_profile.png
+      - output/tables/closeout/anchor_contract_audit.csv
+      - output/tables/closeout/short_run_core_lp_iv.csv
+      - output/tables/closeout/noniv_tdc_lp_closeout.csv
+      - output/tables/closeout/tga_reduced_form_closeout.csv
+      - output/tables/closeout/placebo_summary.csv
+      - output/tables/closeout/core_method_envelope_closeout.csv
+      - output/figures/closeout/core_iv_vs_noniv_profiles.png
+      - output/tables/headline_tga_accounting_decomposition/accounting_decomposition.csv
+      - output/tables/headline_tga_accounting_decomposition/accounting_decomposition_summary.csv
+      - output/tables/long_tga_accounting_decomposition/accounting_decomposition.csv
+      - output/tables/long_tga_accounting_decomposition/accounting_decomposition_summary.csv
+      - output/tables/long_tga_regime_exclusion/regime_exclusion_summary.csv
+      - output/tables/du_anchor_variant_robustness/anchor_variant_summary.csv
+      - output/tables/du_anchor_variant_robustness/anchor_variant_h12_dashboard.csv
+      - output/tables/du_anchor_variant_robustness/anchor_variant_short_dashboard.csv
+      - output/tables/du_anchor_variant_robustness/anchor_variant_lp_iv.csv
+      - output/tables/du_anchor_variant_robustness/anchor_variant_bootstrap.csv
+      - output/tables/du_anchor_variant_robustness/anchor_variant_placebo.csv
+    out: data/processed/analysis_fred_denton_shock_manifest.csv
+    out_json: data/processed/analysis_fred_denton_shock_manifest.json
+
+  - id: estimate_summary
+    action: summarize-estimates
+    lp: data/processed/fred_denton_shock_lp_iv.csv
+    first_stage: data/processed/fred_denton_shock_first_stage.csv
+    out_dir: output/tables/fred_denton_shock_lp_iv
+
+  - id: headline_tga_pretrend_estimate_summary
+    action: summarize-estimates
+    lp: data/processed/fred_denton_headline_tga_pretrend_lp_iv.csv
+    first_stage: data/processed/fred_denton_headline_tga_pretrend_first_stage.csv
+    out_dir: output/tables/headline_tga_pretrend
+
+  - id: long_tga_pretrend_estimate_summary
+    action: summarize-estimates
+    lp: data/processed/fred_denton_long_tga_pretrend_lp_iv.csv
+    first_stage: data/processed/fred_denton_long_tga_pretrend_first_stage.csv
+    out_dir: output/tables/long_tga_pretrend
+
+  - id: long_tga_factor_estimate_summary
+    action: summarize-estimates
+    lp: data/processed/fred_denton_long_tga_factor_lp_iv.csv
+    first_stage: data/processed/fred_denton_long_tga_factor_first_stage.csv
+    out_dir: output/tables/long_tga_factor
+
+  - id: compare_proxy_methods
+    action: compare-proxies
+    left: data/processed/fred_denton_proxy/tdc_monthly_proxy.csv
+    right: data/processed/fred_proxy/tdc_monthly_proxy.csv
+    left_label: denton
+    right_label: residual_spread
+    out_dir: output/tables/proxy_method_comparison
+
+  - id: publication_tables
+    action: export-publication-tables
+    lp: data/processed/fred_denton_shock_lp_iv.csv
+    bootstrap: data/processed/fred_denton_shock_lp_iv_bootstrap.csv
+    first_stage: data/processed/fred_denton_shock_first_stage.csv
+    validation: data/processed/fred_denton_proxy/tdc_validation_table.csv
+    proxy_comparison: output/tables/proxy_method_comparison/quarterly_proxy_comparison.csv
+    out_dir: output/tables/publication
+
+  - id: headline_tga_pretrend_publication_tables
+    action: export-publication-tables
+    lp: data/processed/fred_denton_headline_tga_pretrend_lp_iv.csv
+    bootstrap: data/processed/fred_denton_headline_tga_pretrend_lp_iv_bootstrap.csv
+    first_stage: data/processed/fred_denton_headline_tga_pretrend_first_stage.csv
+    validation: data/processed/fred_denton_proxy/tdc_validation_table.csv
+    proxy_comparison: output/tables/proxy_method_comparison/quarterly_proxy_comparison.csv
+    out_dir: output/tables/headline_tga_pretrend_publication
+
+  - id: long_tga_pretrend_publication_tables
+    action: export-publication-tables
+    lp: data/processed/fred_denton_long_tga_pretrend_lp_iv.csv
+    bootstrap: data/processed/fred_denton_long_tga_pretrend_lp_iv_bootstrap.csv
+    first_stage: data/processed/fred_denton_long_tga_pretrend_first_stage.csv
+    validation: data/processed/fred_denton_proxy/tdc_validation_table.csv
+    proxy_comparison: output/tables/proxy_method_comparison/quarterly_proxy_comparison.csv
+    out_dir: output/tables/long_tga_pretrend_publication
+
+  - id: long_tga_factor_publication_tables
+    action: export-publication-tables
+    lp: data/processed/fred_denton_long_tga_factor_lp_iv.csv
+    bootstrap: data/processed/fred_denton_long_tga_factor_lp_iv_bootstrap.csv
+    first_stage: data/processed/fred_denton_long_tga_factor_first_stage.csv
+    validation: data/processed/fred_denton_proxy/tdc_validation_table.csv
+    proxy_comparison: output/tables/proxy_method_comparison/quarterly_proxy_comparison.csv
+    out_dir: output/tables/long_tga_factor_publication
+
+  - id: compare_long_tga_factor_controls
+    action: compare-lp-results
+    left: data/processed/fred_denton_long_tga_pretrend_lp_iv.csv
+    right: data/processed/fred_denton_long_tga_factor_lp_iv.csv
+    left_label: pretrend
+    right_label: factor_augmented
+    out_dir: output/tables/long_tga_factor_comparison
+
+  - id: compare_long_tga_calendar_controls
+    action: compare-lp-results
+    left: data/processed/fred_denton_long_tga_pretrend_lp_iv.csv
+    right: data/processed/fred_denton_long_tga_calendar_lp_iv.csv
+    left_label: pretrend
+    right_label: calendar_controlled
+    out_dir: output/tables/long_tga_calendar_comparison
+
+  - id: claim_status_h12
+    action: export-claim-status
+    anchor_dashboard: output/tables/du_anchor_variant_robustness/anchor_variant_h12_dashboard.csv
+    regime_summary: output/tables/long_tga_regime_exclusion/regime_exclusion_summary.csv
+    outcomes:
+      - deposits
+      - broad_deposits
+      - bank_credit
+      - commercial_industrial_loans
+      - onrrp
+      - total_mmf
+      - reserves
+    out: output/tables/thesis_claim_status/table_claim_status_h12.csv
+    out_md: output/tables/thesis_claim_status/table_claim_status_h12.md
+
+  - id: anchor_variant_forest_plot
+    action: export-anchor-variant-forest
+    anchor_dashboard: output/tables/du_anchor_variant_robustness/anchor_variant_h12_dashboard.csv
+    outcomes:
+      - deposits
+      - bank_credit
+      - commercial_industrial_loans
+      - onrrp
+      - total_mmf
+    out_dir: output/figures/anchor_variant_forest
+
+  - id: claim_status_short
+    action: export-claim-status
+    anchor_dashboard: output/tables/du_anchor_variant_robustness/anchor_variant_short_dashboard.csv
+    outcomes:
+      - deposits
+      - broad_deposits
+      - bank_credit
+      - commercial_industrial_loans
+      - onrrp
+      - total_mmf
+      - reserves
+    out: output/tables/thesis_claim_status/table_claim_status_short.csv
+    out_md: output/tables/thesis_claim_status/table_claim_status_short.md
+
+  - id: anchor_variant_short_run_profile
+    action: export-short-run-profile
+    anchor_dashboard: output/tables/du_anchor_variant_robustness/anchor_variant_short_dashboard.csv
+    horizons: [0, 1, 2, 3, 4]
+    outcomes:
+      - deposits
+      - bank_credit
+      - commercial_industrial_loans
+      - onrrp
+      - total_mmf
+    out_dir: output/figures/anchor_variant_short_run
+
+  - id: closeout_anchor_contract_audit
+    action: export-anchor-contract-audit
+    monthly_proxy: data/processed/fred_denton_proxy/tdc_monthly_proxy.csv
+    tdcest_estimates: /Users/shanewray/malus/proj/tdcest/data/processed/tdc_estimates.csv
+    out: output/tables/closeout/anchor_contract_audit.csv
+    out_md: output/tables/closeout/anchor_contract_audit.md
+
+  - id: closeout_short_run_core_lp_iv
+    action: export-short-run-core-closeout
+    pretrend_iv: data/processed/fred_denton_long_tga_pretrend_lp_iv.csv
+    calendar_iv: data/processed/fred_denton_long_tga_calendar_lp_iv.csv
+    bootstrap: data/processed/fred_denton_long_tga_pretrend_lp_iv_bootstrap.csv
+    placebo: data/processed/fred_denton_long_tga_placebo_lp_iv_pretrend.csv
+    horizons: [0, 1, 2, 3, 4]
+    outcomes:
+      - deposits
+      - broad_deposits
+      - bank_credit
+      - commercial_industrial_loans
+      - reserves
+      - onrrp
+      - total_mmf
+    out: output/tables/closeout/short_run_core_lp_iv.csv
+    out_md: output/tables/closeout/short_run_core_lp_iv.md
+
+  - id: closeout_noniv_tdc_lp
+    action: export-noniv-tdc-lp-closeout
+    pretrend_panel: data/processed/fred_denton_long_tga_panel_with_pretrend_controls.csv
+    calendar_panel: data/processed/fred_denton_long_tga_panel_with_calendar_controls.csv
+    horizons: [0, 1, 2, 3, 4, 12]
+    outcomes:
+      - deposits
+      - broad_deposits
+      - bank_credit
+      - commercial_industrial_loans
+      - reserves
+      - onrrp
+      - total_mmf
+    pretrend_controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    calendar_controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+      - tax_month
+      - refund_season_month
+      - treasury_coupon_interest_month
+      - debt_ceiling_window
+      - crisis_window
+    out: output/tables/closeout/noniv_tdc_lp_closeout.csv
+    out_md: output/tables/closeout/noniv_tdc_lp_closeout.md
+
+  - id: closeout_tga_reduced_form
+    action: export-tga-reduced-form-closeout
+    pretrend_panel: data/processed/fred_denton_long_tga_panel_with_pretrend_controls.csv
+    calendar_panel: data/processed/fred_denton_long_tga_panel_with_calendar_controls.csv
+    horizons: [0, 1, 2, 3, 4, 12]
+    outcomes:
+      - deposits
+      - broad_deposits
+      - bank_credit
+      - commercial_industrial_loans
+      - reserves
+      - onrrp
+      - total_mmf
+    pretrend_controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+    calendar_controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+      - lag2_deposits
+      - lag3_deposits
+      - pretrend3_deposits
+      - pretrend6_deposits
+      - lag2_bank_credit
+      - lag3_bank_credit
+      - pretrend3_bank_credit
+      - pretrend6_bank_credit
+      - tax_month
+      - refund_season_month
+      - treasury_coupon_interest_month
+      - debt_ceiling_window
+      - crisis_window
+    out: output/tables/closeout/tga_reduced_form_closeout.csv
+    out_md: output/tables/closeout/tga_reduced_form_closeout.md
+
+  - id: closeout_placebo_summary
+    action: export-placebo-summary
+    placebo: data/processed/fred_denton_long_tga_placebo_lp_iv_pretrend.csv
+    model: long_tga_pretrend_iv
+    out: output/tables/closeout/placebo_summary.csv
+    out_md: output/tables/closeout/placebo_summary.md
+
+  - id: closeout_method_envelope
+    action: export-method-envelope-closeout
+    proxy_monthly_comparison: output/tables/proxy_method_comparison/monthly_proxy_comparison.csv
+    proxy_quarterly_comparison: output/tables/proxy_method_comparison/quarterly_proxy_comparison.csv
+    out: output/tables/closeout/core_method_envelope_closeout.csv
+    out_md: output/tables/closeout/core_method_envelope_closeout.md
+
+  - id: closeout_core_iv_vs_noniv_profiles
+    action: export-core-iv-vs-noniv-profiles
+    short_run_iv: output/tables/closeout/short_run_core_lp_iv.csv
+    noniv: output/tables/closeout/noniv_tdc_lp_closeout.csv
+    tga_rf: output/tables/closeout/tga_reduced_form_closeout.csv
+    horizons: [0, 1, 2, 3, 4, 12]
+    outcomes:
+      - deposits
+      - bank_credit
+      - onrrp
+      - total_mmf
+    out_dir: output/figures/closeout
+
+  - id: compare_denton_residual_lp
+    action: compare-lp-results
+    left: data/processed/fred_denton_shock_lp_iv.csv
+    right: data/processed/fred_shock_lp_iv.csv
+    left_label: denton
+    right_label: residual_spread
+    out_dir: output/tables/lp_method_comparison
+
+  - id: spec_manifest
+    action: write-spec-manifest
+    spec: config/analysis_fred_denton_shock.yml
+    out: output/tables/publication/analysis_spec_manifest.csv
+    out_md: output/tables/publication/analysis_spec_manifest.md
+
+  - id: thesis_status_report
+    action: export-thesis-report
+    publication_md: output/tables/publication/publication_tables.md
+    iv_robustness_md: output/tables/iv_robustness/iv_robustness.md
+    fiscal_flow_iv_md: output/tables/fiscal_flow_iv_robustness/iv_robustness.md
+    category_flow_iv_md: output/tables/category_flow_iv_robustness/iv_robustness.md
+    controlled_iv_md: output/tables/iv_robustness_calendar_comparison/iv_robustness_control_comparison.md
+    lp_comparison_md: output/tables/lp_method_comparison/lp_result_comparison.md
+    method_comparison_md: output/tables/proxy_method_comparison/proxy_comparison.md
+    identification_md: docs/identification_risks.md
+    out: output/reports/thesis_status.md
+
+  - id: thesis_figures
+    action: export-figures
+    proxy: data/processed/fred_denton_proxy/tdc_monthly_proxy.csv
+    components: data/processed/fred_denton_proxy/tdc_monthly_components.csv
+    envelope: data/processed/fred_envelope/tdc_monthly_method_envelope.csv
+    lp: data/processed/fred_denton_shock_lp_iv.csv
+    out_dir: output/figures/fred_denton

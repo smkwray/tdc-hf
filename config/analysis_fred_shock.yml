@@ -1,0 +1,206 @@
+root: ..
+report: data/processed/analysis_fred_shock_report.json
+
+steps:
+  - id: download_hf_fred
+    action: download-hf-fred
+    out: data/raw/fred_hf_sources.csv
+
+  - id: build_hf_indicators
+    action: build-fred-indicators
+    raw: data/raw/fred_hf_sources.csv
+    out: data/processed/fred_monthly_indicators.csv
+    metadata: data/processed/fred_monthly_indicator_metadata.csv
+
+  - id: build_proxy
+    action: build-proxy
+    monthly_indicators: data/processed/fred_monthly_indicators.csv
+    out_dir: data/processed/fred_proxy
+
+  - id: build_envelope
+    action: build-envelope
+    monthly_indicators: data/processed/fred_monthly_indicators.csv
+    out_dir: data/processed/fred_envelope
+
+  - id: summarize_proxy
+    action: summarize-run
+    run_dir: data/processed/fred_proxy
+    out_json: data/processed/fred_proxy/run_summary.json
+    out_md: data/processed/fred_proxy/run_summary.md
+
+  - id: build_weekly_state
+    action: build-weekly-state
+    raw: data/raw/fred_hf_sources.csv
+    out: data/processed/tdc_weekly_state.csv
+
+  - id: download_outcome_fred
+    action: download-outcome-fred
+    out: data/raw/fred_outcome_sources.csv
+
+  - id: build_outcomes
+    action: build-outcomes
+    raw: data/raw/fred_outcome_sources.csv
+    out: data/processed/fred_monthly_outcomes.csv
+    metadata: data/processed/fred_monthly_outcome_metadata.csv
+
+  - id: assemble_complete_panel
+    action: assemble-panel
+    inputs:
+      - data/processed/fred_proxy/tdc_monthly_proxy.csv
+      - data/processed/fred_monthly_outcomes.csv
+    lags:
+      - deposits
+      - bank_credit
+    require:
+      - tdc_monthly
+      - deposits
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    out: data/processed/fred_model_panel_complete.csv
+
+  - id: summarize_complete_panel
+    action: summarize-panel
+    data: data/processed/fred_model_panel_complete.csv
+    out: data/processed/fred_model_panel_summary.csv
+
+  - id: residual_tdc_shock
+    action: build-residual-shock
+    data: data/processed/fred_model_panel_complete.csv
+    target: tdc_monthly
+    predictors:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    min_train_obs: 36
+    out: data/processed/fred_complete_residual_shock.csv
+
+  - id: reduced_form_lp
+    action: run-lp
+    data: data/processed/fred_complete_residual_shock.csv
+    shock: tdc_monthly_residual_z
+    outcomes:
+      - deposits
+      - large_time_deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_complete_reduced_form_lp.csv
+
+  - id: tga_rebuild_shock
+    action: build-tga-rebuild-shock
+    data: data/processed/fred_monthly_indicators.csv
+    target: minus_toc
+    predictors:
+      - fed_tsy
+      - banks_tsy
+      - fed_remit_positive
+    min_train_obs: 36
+    out: data/processed/tga_rebuild_shock.csv
+
+  - id: auction_size_shock
+    action: build-auction-size-shock
+    enabled: false
+    raw: ../qrawatch/data/raw/fiscaldata/auctions_query.csv
+    out: data/processed/auction_size_shock.csv
+    date_column: issue_date
+    amount_column: offering_amt
+    tenor_column: security_term
+    min_train_obs: 12
+
+  - id: shock_bundle
+    action: build-shock-bundle
+    inputs:
+      - data/processed/fred_complete_residual_shock.csv
+      - data/processed/tga_rebuild_shock.csv
+      - data/processed/auction_size_shock.csv
+    columns:
+      - tdc_monthly_residual
+      - tdc_monthly_residual_z
+      - tga_rebuild_surprise
+      - tga_rebuild_surprise_z
+      - auction_size_surprise
+      - auction_size_surprise_z
+    out: data/processed/shock_bundle.csv
+
+  - id: assemble_shock_panel
+    action: assemble-panel
+    inputs:
+      - data/processed/fred_model_panel_complete.csv
+      - data/processed/shock_bundle.csv
+    require:
+      - tdc_monthly
+      - deposits
+      - tga_rebuild_surprise_z
+      - auction_size_surprise_z
+    out: data/processed/fred_model_panel_with_shocks.csv
+
+  - id: summarize_shock_panel
+    action: summarize-panel
+    data: data/processed/fred_model_panel_with_shocks.csv
+    out: data/processed/fred_model_panel_with_shocks_summary.csv
+
+  - id: shock_first_stage
+    action: first-stage
+    data: data/processed/fred_model_panel_with_shocks.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - auction_size_surprise_z
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    out: data/processed/fred_shock_first_stage.csv
+
+  - id: shock_lp_iv
+    action: run-lp-iv
+    data: data/processed/fred_model_panel_with_shocks.csv
+    treatment: tdc_monthly
+    instruments:
+      - tga_rebuild_surprise_z
+      - auction_size_surprise_z
+    outcomes:
+      - deposits
+      - large_time_deposits
+      - domestic_non_large_time_deposits
+      - broad_deposits
+      - bank_credit
+    controls:
+      - lag_deposits
+      - lag_bank_credit
+      - yield_2y
+      - yield_10y
+    horizons: [0, 1, 2, 3, 4, 6, 12]
+    out: data/processed/fred_shock_lp_iv.csv
+
+  - id: source_manifest
+    action: write-manifest
+    paths:
+      - data/raw/fred_hf_sources.csv
+      - data/raw/fred_outcome_sources.csv
+      - data/processed/fred_monthly_indicators.csv
+      - data/processed/fred_monthly_outcomes.csv
+      - data/processed/fred_proxy/tdc_monthly_proxy.csv
+      - data/processed/fred_model_panel_complete.csv
+      - data/processed/shock_bundle.csv
+      - data/processed/fred_model_panel_with_shocks.csv
+      - data/processed/fred_shock_first_stage.csv
+      - data/processed/fred_shock_lp_iv.csv
+    out: data/processed/analysis_fred_shock_manifest.csv
+    out_json: data/processed/analysis_fred_shock_manifest.json
+
+  - id: estimate_summary
+    action: summarize-estimates
+    lp: data/processed/fred_shock_lp_iv.csv
+    first_stage: data/processed/fred_shock_first_stage.csv
+    out_dir: output/tables/fred_shock_lp_iv

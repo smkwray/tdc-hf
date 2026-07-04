@@ -1,0 +1,54 @@
+repos:
+  tdcest:
+    root: ../tdcest
+    role: quarterly_tdc_anchor
+    preferred_outputs:
+      components: data/processed/tdc_components.csv
+      estimates: data/processed/tdc_estimates.csv
+      handoff_bundle: data/processed/tdc_downstream_handoff_bundle.json
+  tdcpass:
+    root: ../tdcpass
+    role: pass_through_reference
+    preferred_outputs:
+      quarterly_panel: data/derived/quarterly_panel.csv
+      lp_specs: config/lp_specs.yml
+      shock_specs: config/shock_specs.yml
+  tsyparty:
+    root: ../tsyparty
+    role: holder_and_auction_context
+    preferred_outputs:
+      primary_allocation: outputs/primary_market/primary_allocation.csv
+      holder_response_panel: outputs/holder_response/holder_response_panel.csv
+      sector_features: outputs/similarity/sector_features.csv
+  wamest:
+    root: ../wamest
+    role: holder_maturity_context
+    preferred_outputs:
+      z1_sector_panel: data/interim/z1_sector_panel_full.csv
+      canonical_maturity: outputs/full_coverage_release/canonical_sector_maturity.csv
+  tdcsfc:
+    root: ../tdcsfc
+    role: accounting_and_source_normalization_reference
+    preferred_outputs:
+      processed_source_contracts: data/processed
+
+contracts:
+  quarterly_anchor:
+    date_column: date
+    frequency: quarterly
+    required_components:
+      - fed_tsy_tx
+      - bank_depository_tsy_tx
+      - row_tsy_tx
+      - treasury_operating_cash_tx
+      - fed_remit_positive
+  monthly_components:
+    date_column: date
+    frequency: monthly
+    required_outputs:
+      - fed_tsy
+      - banks_tsy
+      - row_tsy
+      - minus_toc
+      - fed_remit_positive
+      - tdc_monthly
