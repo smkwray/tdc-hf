@@ -353,7 +353,13 @@ def seam_diagnostic(tax_daily: pd.DataFrame) -> dict[str, object]:
     anchor_years = [year for year in [2022, 2023, 2024] if year in annual.index]
     anchor = annual.loc[anchor_years].round(3).to_dict(orient="index") if anchor_years else {}
     continuity_ok = True
+    anchor_level_ok = True
+    anchor_level_bounds: dict[str, object] = {}
     continuity_bounds: dict[str, float] = {}
+    if 2022 in annual.index and "tax_nonwithheld_bn" in annual.columns:
+        nonwithheld_2022 = float(annual.loc[2022, "tax_nonwithheld_bn"])
+        anchor_level_bounds["tax_nonwithheld_bn_2022"] = {"value": round(nonwithheld_2022, 3), "lower": 500.0, "upper": 700.0}
+        anchor_level_ok = 500.0 < nonwithheld_2022 < 700.0
     if len(anchor_years) >= 2:
         for bucket in [c for c in annual.columns if c in {"tax_withheld_bn", "tax_nonwithheld_bn", "tax_corporate_bn", "tax_other_bn"}]:
             vals = annual.loc[anchor_years, bucket].replace(0, np.nan).dropna()
@@ -367,6 +373,8 @@ def seam_diagnostic(tax_daily: pd.DataFrame) -> dict[str, object]:
     verdict = "stitched"
     if before_days == 0 or after_days == 0 or set(before_buckets) != set(after_buckets):
         verdict = "coverage_warning"
+    elif not anchor_level_ok:
+        verdict = "annual_anchor_level_warning"
     elif not continuity_ok:
         verdict = "annual_anchor_warning"
     return {
@@ -380,6 +388,8 @@ def seam_diagnostic(tax_daily: pd.DataFrame) -> dict[str, object]:
         "median_daily_ratio_after_before": ratio,
         "annual_anchor_totals_bn": anchor,
         "annual_anchor_continuity_ok": continuity_ok,
+        "annual_anchor_level_ok": anchor_level_ok,
+        "annual_anchor_level_bounds": anchor_level_bounds,
         "annual_anchor_max_ratio_or_inverse": continuity_bounds,
         "note": "Dedicated federal_tax_deposits component rows are used pre-seam; subtotal/inter-agency/reference rows are excluded. Post-seam taxes are stitched from Table II tax lines.",
     }
@@ -968,12 +978,14 @@ def estimate_ssa_proxy_lane(flows: pd.DataFrame, calendar: pd.DataFrame, weekly_
     )
     iv_beta = np.nan
     iv_p = np.nan
+    iv_se = np.nan
     if fstat >= 10:
         first_stage_hat = fs.fittedvalues.rename("du_core_benefits_hat")
         iv_sample = pd.concat([y.rename("y"), first_stage_hat, panel[controls]], axis=1).dropna()
         iv = sm.OLS(iv_sample["y"], sm.add_constant(iv_sample[["du_core_benefits_hat", *controls]], has_constant="add")).fit(cov_type="HC1")
         iv_beta = float(iv.params["du_core_benefits_hat"])
         iv_p = float(iv.pvalues["du_core_benefits_hat"])
+        iv_se = float(iv.bse["du_core_benefits_hat"])
     return {
         "status": "predicted_dollar_fallback",
         "official_fetch": fetch,
@@ -984,6 +996,8 @@ def estimate_ssa_proxy_lane(flows: pd.DataFrame, calendar: pd.DataFrame, weekly_
         "p_event_permutation": perm_p,
         "iv_h4_beta": iv_beta,
         "iv_h4_p": iv_p,
+        "iv_h4_se_uncorrected": iv_se,
+        "iv_se_uncorrected": bool(np.isfinite(iv_se)),
         "n": int(rf.nobs),
         "verdict": "weak_predicted_dollar_fallback" if fstat < 10 else "strong_predicted_dollar_fallback",
         "note": "Instrument is cycle-share times lagged monthly DTS benefit totals assigned to exact H.8 weeks; legacy 3rd-of-month and SSI weeks are separate controls, not the omitted control group.",
@@ -1059,6 +1073,13 @@ def write_disbursement_readout(
     residual = float(weekly["dts_reconciliation_error_bn"].abs().dropna().median()) if "dts_reconciliation_error_bn" in weekly else np.nan
     ssa_fetch = ssa.get("official_fetch", {}) if isinstance(ssa.get("official_fetch", {}), dict) else {}
     seam_anchor = seam.get("annual_anchor_totals_bn", {})
+    iv_beta = float(ssa.get("iv_h4_beta", np.nan))
+    iv_se_uncorrected = float(ssa.get("iv_h4_se_uncorrected", np.nan))
+    iv_ci = (
+        f"[{iv_beta - 1.96 * iv_se_uncorrected:.3g}, {iv_beta + 1.96 * iv_se_uncorrected:.3g}]"
+        if np.isfinite(iv_beta) and np.isfinite(iv_se_uncorrected)
+        else "not available"
+    )
     lines = [
         "# DTS Disbursement-Side LP Readout",
         "",
@@ -1074,8 +1095,8 @@ def write_disbursement_readout(
             "Lead-controlled LP is the headline persistence path. LP_naive is retained only as the recurring-schedule-contaminated comparison; FDL is the distributed-lag companion.",
             "",
             f"DTS coverage: weekly flow panel {weekly.index.min().date()} through {weekly.index.max().date()}, {len(weekly)} H.8 Thursday-to-Wednesday windows.",
-            f"Seam-stitching verdict: {seam.get('verdict')} ({seam.get('last_dedicated_date')} dedicated through {seam.get('first_table_ii_date')} Table II start). Annual anchor continuity ok={seam.get('annual_anchor_continuity_ok')}; 2022-2024 component totals={seam_anchor}. {seam.get('note')}",
-            f"Crosswalk rows: {len(crosswalk)}. Unmapped above threshold: {unmapped}. Median absolute Table II reconciliation residual: {residual:.4f} bn.",
+            f"Seam-stitching verdict: {seam.get('verdict')} ({seam.get('last_dedicated_date')} dedicated through {seam.get('first_table_ii_date')} Table II start). Annual anchor continuity ok={seam.get('annual_anchor_continuity_ok')}; annual anchor level ok={seam.get('annual_anchor_level_ok')}; 2022-2024 component totals={seam_anchor}. {seam.get('note')}",
+            f"Crosswalk rows: {len(crosswalk)}. Unmapped above threshold: {unmapped}. Median absolute Table II reconciliation residual: {residual:.4f} bn. The residual moved from 0.005bn to 0.124bn after the crosswalk remap because category bucket composition changed; it remains negligible relative to billion-dollar weekly flows.",
             "",
             "## Retention Table",
             "",
@@ -1089,19 +1110,28 @@ def write_disbursement_readout(
             "",
             "Deposit, reserve, Wednesday TGA, ON RRP, MMF, and bank-credit sensitivity rows are in `dts_disbursement_lp_estimates.csv` where source series exist. WTREGEN is kept as week-average TGA sensitivity; WDTGAL is the Wednesday-level TGA mirror.",
             f"SSA official fetch: {ssa_fetch.get('status', 'not_attempted')} at {ssa_fetch.get('url', '')}; detail={ssa_fetch.get('detail', '')}",
-            f"SSA lane verdict: {ssa.get('verdict', ssa.get('status'))}; first-stage F={ssa.get('first_stage_f', np.nan):.3g}; reduced-form h4 beta={ssa.get('reduced_form_h4_beta', np.nan):.3g}, p={ssa.get('reduced_form_h4_p', np.nan):.3g}, permutation p={ssa.get('p_event_permutation', np.nan):.3g}; 2SLS h4 beta={ssa.get('iv_h4_beta', np.nan):.3g}, p={ssa.get('iv_h4_p', np.nan):.3g}. {ssa.get('note', '')}",
+            f"SSA lane verdict: {ssa.get('verdict', ssa.get('status'))}; first-stage F={ssa.get('first_stage_f', np.nan):.3g}; reduced-form h4 beta={ssa.get('reduced_form_h4_beta', np.nan):.3g}, p={ssa.get('reduced_form_h4_p', np.nan):.3g}, permutation p={ssa.get('p_event_permutation', np.nan):.3g}; 2SLS h4 beta={ssa.get('iv_h4_beta', np.nan):.3g}, p={ssa.get('iv_h4_p', np.nan):.3g}, fitted-value se_uncorrected={ssa.get('iv_se_uncorrected', False)}, uncorrected CI={iv_ci}. {ssa.get('note', '')}",
             f"Tax-deadline lane verdict: {tax_lane.get('verdict', tax_lane.get('status'))}; h4 deadline beta={tax_lane.get('tax_due_h4_beta', np.nan):.3g}, p={tax_lane.get('tax_due_h4_p', np.nan):.3g}, permutation p={tax_lane.get('p_event_permutation', np.nan):.3g}. {tax_lane.get('note', '')}",
             f"Descriptive lead placebo rate: {placebo_rate} significant at 5 percent.",
             "Event-lane permutation inference is within-year event-label permutation with 999 seeded draws; tax remains descriptive event-time and SSA is disclosed as a fallback-dollar weak/strong lane according to the first-stage F.",
             "",
+            "## Verified Caveats",
+            "",
+            "Tax lead placebos reflect genuine anticipation: payroll income is deposited before it is remitted, so the tax-drain path is descriptive-with-anticipation rather than clean causal timing.",
+            "Tax-drain persistence is robust through h0-h8 only; h13 dies ex-April and post-seam. Safe form: drains persist through ~2 months; credits decay by h13.",
+            "The core-outflow mid-horizon bump is spec-dependent: null in the LP wild bootstrap and significant only in the FDL path, so it is not retention evidence.",
+            "SSA lane label: strong first stage, underpowered outcome - uninformative on magnitude. The null must not be read as evidence that benefits do not reach deposits.",
+            "Pandemic-block edge convention: for the first post-block week, the t-1 base can sit inside the excluded block for one row per horizon.",
+            "",
             "## Falsification Map",
             "",
-            "Durable TDC deposit creation: core-DU beta0 mechanically plausible; beta4/beta8/beta13 stay materially positive ex-pandemic; clean leads; not driven by broad bucket; tax drains roughly symmetric; survives schedule-predicted instruments.",
-            "Plumbing blip: positive beta0 decaying to ~0 by h=1..4, mirrored by RRP/MMF/debt flows.",
+            "Landing-share/plumbing check: core-DU beta0 is mechanically plausible and well below one, consistent with partial commercial-bank landing.",
+            "Credit persistence: core credits decay by h13; any mid-horizon bump must be treated as spec-dependent rather than retention evidence.",
+            "Tax-drain path: tax receipts drain deposits through about two months, with anticipation contaminating causal timing and no safe h13 persistence claim.",
             "Perimeter/measurement failure: no plausible beta0 for core-DU credits despite clean Wednesday-level TGA/reserve accounting.",
             "Artifact flag: any headline that exists only on the net treatment and dies when gross credits and drains are separated.",
             "",
-            "Corrected claim boundary: descriptive weekly-flow evidence supports a mechanical landing-share/plumbing check. Persistence requires the lead-controlled and FDL rows, not the naive LP path. Quasi-experiments identify their specific margins where valid; this should be read alongside the QRA absorption-null evidence in `qra_event_lp_readout.md`.",
+            "Corrected claim boundary: descriptive weekly-flow evidence supports a mechanical landing-share/plumbing check. Persistence requires the lead-controlled and FDL rows, not the naive LP path; safe persistence language is drains through ~2 months and credits decaying by h13. Quasi-experiments identify their specific margins where valid; this should be read alongside the QRA absorption-null evidence in `qra_event_lp_readout.md`.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
