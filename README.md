@@ -86,20 +86,18 @@ Run a minimal demo:
 - `config/series_registry.yml`: public series registry.
 - `config/upstream_sources.yml`: expected sibling-project outputs.
 
-## Documentation
-
-- `docs/temporal_disaggregation.md`: benchmarking method notes.
-- `docs/identification_risks.md`: identification and interpretation notes.
-- `docs/high_frequency_results.md`: current generated-result summary.
-
 ## Repository Layout
 
 ```text
 config/                 analysis specs and source contracts
 data/raw/               local raw downloads, ignored
-data/processed/         generated processed data, ignored
-docs/                   method and result notes
+data/processed/         generated processed data and readouts, ignored
+docs/                   local method and result notes, ignored
 output/                 generated tables and figures, ignored
 src/tdchf/              Python package
 tests/                  regression tests
 ```
+
+Method and result notes are generated locally under ignored directories; the
+generated readouts under `data/processed/` are the primary result documents
+after a local pipeline run.
