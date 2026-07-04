@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import numpy as np
 import pandas as pd
@@ -15,6 +17,8 @@ SEAM_LAST_DEDICATED = pd.Timestamp("2023-02-13")
 SEAM_FIRST_TABLE_II = pd.Timestamp("2023-02-14")
 HORIZONS = [-4, -3, -2, *range(0, 14)]
 RETENTION_HORIZONS = [0, 4, 8, 13]
+PANDEMIC_BLOCK_QUARTERS = {"2020Q2", "2020Q3", "2020Q4", "2021Q1"}
+SSA_OACT_PAYMENT_URL = "https://www.ssa.gov/oact/progdata/payment.html"
 FLOW_BUCKETS = [
     "du_core_outflows_bn",
     "tax_receipts_bn",
@@ -72,13 +76,85 @@ def map_dts_category(transaction_type: object, category: object) -> str:
             return "debt_issues_gross"
         if cat.startswith("taxes - withheld individual/fica") or "withheld income and employment" in cat:
             return "tax_withheld"
-        if "non withheld ind/seca" in cat or "individual income taxes" in cat:
+        if "non withheld ind/seca" in cat or "individual income and employment taxes, not withheld" in cat or "individual income taxes" in cat:
             return "tax_nonwithheld"
         if "corporate income" in cat or "corporation income taxes" in cat:
             return "tax_corporate"
-        if cat.startswith("taxes - ") or any(token in cat for token in ["estate and gift", "excise", "federal unemployment", "railroad retirement taxes"]):
+        if cat.startswith("taxes - ") or any(
+            token in cat
+            for token in [
+                "estate and gift",
+                "excise",
+                "customs",
+                "federal unemployment",
+                "railroad retirement taxes",
+                "state unemployment insurance deposits",
+            ]
+        ):
             return "tax_other"
-        return "other_deposits"
+        if any(
+            token in cat
+            for token in [
+                "cash ftd",
+                "ftd's received",
+                "transfers from depositaries",
+                "transfers from federal reserve account",
+            ]
+        ):
+            return "tax_table_reference"
+        if cat in {"other deposits", "unclassified - deposits"}:
+            return "other_deposits"
+        if any(
+            token in cat
+            for token in [
+                "agriculture",
+                "commodity credit",
+                "deposit insurance",
+                "deposits by states",
+                "department",
+                "dept of",
+                "dhs -",
+                "dod -",
+                "dol -",
+                "doi -",
+                "dot -",
+                "air transport security fees",
+                "education",
+                "energy",
+                "export-import bank",
+                "fcc",
+                "federal communications",
+                "federal reserve earnings",
+                "federal retirement thrift savings plan",
+                "foreign deposits",
+                "foreign military sales",
+                "general services",
+                "gse",
+                "health",
+                "hhs -",
+                "housing and urban",
+                "hud -",
+                "iap -",
+                "independent agencies",
+                "international monetary fund",
+                "justice",
+                "judicial branch",
+                "medicare premiums",
+                "mint",
+                "national credit union",
+                "postal service",
+                "opm - federal employee",
+                "securities and exchange",
+                "small business",
+                "ssa -",
+                "treas -",
+                "united states postal service",
+                "usda -",
+                "veterans affairs",
+            ]
+        ):
+            return "other_deposits"
+        return "unmapped"
     if typ == "withdrawals":
         if cat.startswith("public debt cash redemp"):
             return "debt_redemptions_gross"
@@ -92,10 +168,86 @@ def map_dts_category(transaction_type: object, category: object) -> str:
             return "du_core_salaries_other"
         if "tax refunds" in cat or "irs tax refunds" in cat:
             return "refunds_table_ii_reference"
-        if any(token in cat for token in ["medicare", "medicaid", "hhs - grants", "defense vendor", "dod -", "grants to states"]):
+        if any(
+            token in cat
+            for token in [
+                "medicare",
+                "medicaid",
+                "hhs - grants",
+                "defense vendor",
+                "dod -",
+                "grants to states",
+                "department",
+                "dept of",
+                "dhs -",
+                "dol -",
+                "doi -",
+                "dot -",
+                "education",
+                "energy",
+                "food and nutrition",
+                "food stamps",
+                "fed. highway administration",
+                "irs - advanced child tax credit",
+                "irs - economic impact payments",
+                "gsa",
+                "general services",
+                "health and human services",
+                "hhs -",
+                "housing and urban",
+                "hud -",
+                "independent agencies",
+                "justice",
+                "labor dept",
+                "marketplace",
+                "nasa",
+                "national science",
+                "environmental protection",
+                "fcc - universal service",
+                "postal service",
+                "small business",
+                "supp nutrition",
+                "supple. nutrition",
+                "temporary assistance",
+                "transportation security",
+                "unemployment assist",
+                "unemployment insurance benefits",
+                "us army corps",
+                "usda -",
+                "veterans affairs programs",
+            ]
+        ):
             return "du_broad_outflows"
-        return "other_withdrawals"
-    return "other"
+        if any(
+            token in cat
+            for token in [
+                "air carrier worker support",
+                "airline worker support",
+                "commodity credit",
+                "coronavirus relief fund",
+                "emergency rental assistance",
+                "federal communications",
+                "federal deposit insurance",
+                "federal employees insurance",
+                "federal financing bank",
+                "federal retirement thrift savings",
+                "iap -",
+                "international monetary fund",
+                "opm - federal employee",
+                "opm - civil serv",
+                "judicial branch",
+                "social security admin",
+                "treas -",
+                "transfers to depositaries",
+                "transfers to federal reserve account",
+                "unclassified",
+            ]
+        ):
+            return "other_withdrawals"
+        if cat == "other withdrawals":
+            return "other_withdrawals"
+        return "unmapped"
+    return "unmapped"
 
 
 def build_dts_crosswalk(transactions: pd.DataFrame, *, threshold_bn: float = 10.0) -> pd.DataFrame:
@@ -123,14 +275,26 @@ def _filter_transaction_detail_rows(transactions: pd.DataFrame) -> pd.DataFrame:
     return raw
 
 
-def _tax_bucket_from_dedicated(value: object) -> str:
+def _tax_bucket_from_dedicated(value: object) -> str | None:
     text = _norm_text(value).lower()
+    if any(
+        token in text
+        for token in [
+            "cash federal tax deposits",
+            "inter-agency transfers",
+            "these receipts were deposited in",
+            "tax and loan accounts",
+        ]
+    ):
+        return None
     if "withheld income and employment" in text:
         return "tax_withheld_bn"
     if "individual income taxes" in text or "cash federal tax deposits" in text:
         return "tax_nonwithheld_bn"
     if "corporation income taxes" in text:
         return "tax_corporate_bn"
+    if any(token in text for token in ["railroad retirement", "excise", "federal unemployment", "estate and gift", "unclassified taxes"]):
+        return "tax_other_bn"
     return "tax_other_bn"
 
 
@@ -157,6 +321,7 @@ def build_stitched_tax_daily(transactions: pd.DataFrame, tax_deposits: pd.DataFr
         pre["tax_bucket"] = pre["tax_deposit_type"].map(_tax_bucket_from_dedicated)
         pre["amount_bn"] = _amount_bn(pre["tax_deposit_today_amt"])
         pre["source"] = "dedicated_federal_tax_deposits"
+        pre = pre.loc[pre["tax_bucket"].notna()].copy()
         pre = pre[["record_date", "tax_bucket", "amount_bn", "source"]]
 
     post = transactions.copy()
@@ -180,9 +345,30 @@ def seam_diagnostic(tax_daily: pd.DataFrame) -> dict[str, object]:
     before_med = float(before.groupby("record_date")["amount_bn"].sum().median()) if before_days else np.nan
     after_med = float(after.groupby("record_date")["amount_bn"].sum().median()) if after_days else np.nan
     ratio = after_med / before_med if np.isfinite(after_med) and np.isfinite(before_med) and before_med else np.nan
+    annual = (
+        tax_daily.assign(year=pd.to_datetime(tax_daily["record_date"], errors="coerce").dt.year)
+        .pivot_table(index="year", columns="tax_bucket", values="amount_bn", aggfunc="sum", fill_value=0.0)
+        .sort_index()
+    )
+    anchor_years = [year for year in [2022, 2023, 2024] if year in annual.index]
+    anchor = annual.loc[anchor_years].round(3).to_dict(orient="index") if anchor_years else {}
+    continuity_ok = True
+    continuity_bounds: dict[str, float] = {}
+    if len(anchor_years) >= 2:
+        for bucket in [c for c in annual.columns if c in {"tax_withheld_bn", "tax_nonwithheld_bn", "tax_corporate_bn", "tax_other_bn"}]:
+            vals = annual.loc[anchor_years, bucket].replace(0, np.nan).dropna()
+            if len(vals) >= 2:
+                ratios = vals.iloc[1:].to_numpy() / vals.iloc[:-1].to_numpy()
+                max_ratio = float(np.nanmax(ratios))
+                min_ratio = float(np.nanmin(ratios))
+                continuity_bounds[bucket] = max(abs(max_ratio), abs(1 / min_ratio)) if min_ratio else np.inf
+                if min_ratio < 0.2 or max_ratio > 5.0:
+                    continuity_ok = False
     verdict = "stitched"
     if before_days == 0 or after_days == 0 or set(before_buckets) != set(after_buckets):
         verdict = "coverage_warning"
+    elif not continuity_ok:
+        verdict = "annual_anchor_warning"
     return {
         "verdict": verdict,
         "last_dedicated_date": SEAM_LAST_DEDICATED.date().isoformat(),
@@ -192,7 +378,10 @@ def seam_diagnostic(tax_daily: pd.DataFrame) -> dict[str, object]:
         "before_buckets": before_buckets,
         "after_buckets": after_buckets,
         "median_daily_ratio_after_before": ratio,
-        "note": "Dedicated federal_tax_deposits endpoint ends at the Table IV era; post-seam taxes are stitched from Table II tax lines.",
+        "annual_anchor_totals_bn": anchor,
+        "annual_anchor_continuity_ok": continuity_ok,
+        "annual_anchor_max_ratio_or_inverse": continuity_bounds,
+        "note": "Dedicated federal_tax_deposits component rows are used pre-seam; subtotal/inter-agency/reference rows are excluded. Post-seam taxes are stitched from Table II tax lines.",
     }
 
 
@@ -474,6 +663,16 @@ def _ols_hac(y: pd.Series, x: pd.DataFrame, *, maxlags: int) -> sm.regression.li
     return sm.OLS(sample["y"], sm.add_constant(sample[xcols], has_constant="add")).fit(cov_type="HAC", cov_kwds={"maxlags": maxlags})
 
 
+def _hc1_ols(y: pd.Series, x: pd.DataFrame) -> sm.regression.linear_model.RegressionResultsWrapper | None:
+    sample = pd.concat([y.rename("y"), x], axis=1).replace([np.inf, -np.inf], np.nan).dropna()
+    if len(sample) < max(24, x.shape[1] + 8):
+        return None
+    xcols = [col for col in x.columns if sample[col].nunique() >= 2]
+    if not xcols:
+        return None
+    return sm.OLS(sample["y"], sm.add_constant(sample[xcols], has_constant="add")).fit(cov_type="HC1")
+
+
 def _wild_pvalue(y: pd.Series, x: pd.DataFrame, coef: str, beta: float, *, seed: int, reps: int = 999) -> float:
     sample = pd.concat([y.rename("y"), x], axis=1).replace([np.inf, -np.inf], np.nan).dropna()
     if len(sample) < 24:
@@ -494,13 +693,97 @@ def _wild_pvalue(y: pd.Series, x: pd.DataFrame, coef: str, beta: float, *, seed:
     return float(np.mean(np.abs(betas) >= abs(beta)))
 
 
+def _permutation_pvalue(
+    sample: pd.DataFrame,
+    *,
+    y_col: str,
+    event_col: str,
+    control_cols: list[str],
+    beta: float,
+    seed: int,
+    reps: int = 999,
+) -> float:
+    clean = sample[[y_col, event_col, *control_cols]].replace([np.inf, -np.inf], np.nan).dropna().copy()
+    if len(clean) < 24 or clean[event_col].nunique() < 2:
+        return np.nan
+    rng = np.random.default_rng(seed)
+    years = pd.DatetimeIndex(clean.index).year
+    betas: list[float] = []
+    for _ in range(reps):
+        permuted = clean[event_col].copy()
+        for year in np.unique(years):
+            idx = clean.index[years == year]
+            permuted.loc[idx] = rng.permutation(permuted.loc[idx].to_numpy())
+        x = sm.add_constant(pd.concat([permuted.rename(event_col), clean[control_cols]], axis=1), has_constant="add")
+        try:
+            fit = sm.OLS(clean[y_col], x).fit()
+        except (ValueError, np.linalg.LinAlgError):
+            continue
+        if event_col in fit.params:
+            betas.append(float(fit.params[event_col]))
+    if not betas:
+        return np.nan
+    arr = np.asarray(betas)
+    return float((np.sum(np.abs(arr) >= abs(beta)) + 1) / (len(arr) + 1))
+
+
+def _wild_pvalue_sum(y: pd.Series, x: pd.DataFrame, coefs: list[str], beta: float, *, seed: int, reps: int = 999) -> float:
+    sample = pd.concat([y.rename("y"), x], axis=1).replace([np.inf, -np.inf], np.nan).dropna()
+    coefs = [coef for coef in coefs if coef in sample.columns]
+    if len(sample) < 24 or not coefs:
+        return np.nan
+    cols = list(x.columns)
+    keep = [c for c in cols if c not in coefs]
+    x_full = sm.add_constant(sample[cols], has_constant="add").to_numpy(dtype=float)
+    x_res = sm.add_constant(sample[keep], has_constant="add").to_numpy(dtype=float)
+    try:
+        b0 = np.linalg.lstsq(x_res, sample["y"].to_numpy(dtype=float), rcond=None)[0]
+    except np.linalg.LinAlgError:
+        return np.nan
+    fitted = x_res @ b0
+    resid = sample["y"].to_numpy(dtype=float) - fitted
+    rng = np.random.default_rng(seed)
+    signs = rng.choice(np.array([-1.0, 1.0]), size=(len(sample), reps))
+    boot = np.linalg.pinv(x_full) @ (fitted[:, None] + resid[:, None] * signs)
+    positions = [cols.index(coef) + 1 for coef in coefs]
+    betas = boot[positions, :].sum(axis=0)
+    return float(np.mean(np.abs(betas) >= abs(beta)))
+
+
 def _prepare_regression_panel(flows: pd.DataFrame, calendar: pd.DataFrame, weekly_state: pd.DataFrame) -> pd.DataFrame:
     panel = flows.join(calendar.set_index("date"), how="left").join(weekly_state, how="left").sort_index()
     for col in FLOW_BUCKETS:
         for lag in range(1, 5):
             panel[f"{col}_lag{lag}"] = panel[col].shift(lag)
+        for lead in range(1, 14):
+            panel[f"{col}_lead{lead}"] = panel[col].shift(-lead)
     panel["net_du_flow_bn"] = panel["du_core_outflows_bn"] - panel["tax_receipts_bn"]
     return panel
+
+
+def _pandemic_mask(index: pd.Index) -> pd.Series:
+    dates = pd.DatetimeIndex(index)
+    return pd.Series(dates.to_period("Q").astype(str).isin(PANDEMIC_BLOCK_QUARTERS), index=index)
+
+
+def _window_overlaps_pandemic(index: pd.Index, horizon: int) -> pd.Series:
+    blocked = _pandemic_mask(index)
+    out = blocked.copy()
+    if horizon >= 0:
+        for step in range(0, horizon + 1):
+            out |= blocked.shift(-step, fill_value=False)
+    else:
+        for step in range(1, abs(horizon) + 2):
+            out |= blocked.shift(step, fill_value=False)
+    return out
+
+
+def _sample_mask(index: pd.Index, sample_name: str, horizon: int) -> pd.Series:
+    if sample_name == "full":
+        return pd.Series(True, index=index)
+    if sample_name != "ex_pandemic":
+        raise ValueError(f"unknown sample: {sample_name}")
+    return ~_window_overlaps_pandemic(index, horizon)
 
 
 def estimate_disbursement_lps(flows: pd.DataFrame, calendar: pd.DataFrame, weekly_state: pd.DataFrame) -> pd.DataFrame:
@@ -509,61 +792,72 @@ def estimate_disbursement_lps(flows: pd.DataFrame, calendar: pd.DataFrame, weekl
     cal_controls = [c for c in calendar.columns if c != "date"]
     lag_controls = [f"{col}_lag{lag}" for col in FLOW_BUCKETS for lag in range(1, 5)]
     controls = [c for c in [*flow_controls, *cal_controls, *lag_controls] if c in panel.columns]
-    samples = {
-        "full": panel,
-        "ex_pandemic": panel.loc[~panel.index.to_period("Q").astype(str).isin(["2020Q2", "2020Q3", "2020Q4", "2021Q1"])],
-    }
     rows: list[dict[str, object]] = []
-    for sample_name, sample in samples.items():
+    for sample_name in ["full", "ex_pandemic"]:
         for outcome, source in HEADLINE_OUTCOMES.items():
-            if source not in sample.columns or sample[source].notna().sum() < 30:
+            if source not in panel.columns or panel[source].notna().sum() < 30:
                 continue
-            y_level = pd.to_numeric(sample[source], errors="coerce")
+            y_level = pd.to_numeric(panel[source], errors="coerce")
             for h in HORIZONS:
                 if h >= 0:
                     y = y_level.shift(-h) - y_level.shift(1)
                 else:
                     y = y_level.shift(1) - y_level.shift(abs(h) + 1)
-                regressors = sample[["du_core_outflows_bn", "tax_receipts_bn", *controls]].copy()
-                fit = _ols_hac(y, regressors, maxlags=max(abs(h) + 4, 4))
-                if fit is None:
-                    continue
-                for treatment in ["du_core_outflows_bn", "tax_receipts_bn"]:
-                    if treatment not in fit.params:
+                mask = _sample_mask(panel.index, sample_name, h)
+                lead_controls = [f"{col}_lead{lead}" for col in FLOW_BUCKETS for lead in range(1, h + 1)] if h > 0 else []
+                for spec_type, extra_controls, spec_note in [
+                    ("LP_naive", [], "gross flows separate; HAC NW(h+4); 4 lags of all flow buckets; exact H8 Thu-Wed windows; naive no future-flow controls"),
+                    (
+                        "LP_lead_controlled",
+                        lead_controls,
+                        "gross flows separate; HAC NW(h+4); 4 lags plus scheduled future flow controls t+1..t+h; exact H8 Thu-Wed windows",
+                    ),
+                ]:
+                    regressors = panel.loc[mask, ["du_core_outflows_bn", "tax_receipts_bn", *controls, *extra_controls]].copy()
+                    y_sample = y.loc[mask]
+                    fit = _ols_hac(y_sample, regressors, maxlags=max(abs(h) + 4, 4))
+                    if fit is None:
                         continue
-                    beta = float(fit.params[treatment])
-                    seed = 20260704 + len(rows) * 17
-                    rows.append(
-                        {
-                            "treatment_id": treatment,
-                            "spec_type": "LP",
-                            "outcome": outcome,
-                            "horizon": h,
-                            "sample": sample_name,
-                            "beta": beta,
-                            "se": float(fit.bse[treatment]),
-                            "p": float(fit.pvalues[treatment]),
-                            "p_wild_bootstrap": _wild_pvalue(y, regressors, treatment, beta, seed=seed) if h in RETENTION_HORIZONS and outcome == "deposits_dpsacb" else np.nan,
-                            "n": int(fit.nobs),
-                            "spec_flags": "gross flows separate; HAC NW(h+4); 4 lags of all flow buckets; exact H8 Thu-Wed windows",
-                            "uniform_band_lower": np.nan,
-                            "uniform_band_upper": np.nan,
-                        }
-                    )
+                    for treatment in ["du_core_outflows_bn", "tax_receipts_bn"]:
+                        if treatment not in fit.params:
+                            continue
+                        beta = float(fit.params[treatment])
+                        seed = 20260704 + len(rows) * 17
+                        rows.append(
+                            {
+                                "treatment_id": treatment,
+                                "spec_type": spec_type,
+                                "outcome": outcome,
+                                "horizon": h,
+                                "sample": sample_name,
+                                "beta": beta,
+                                "se": float(fit.bse[treatment]),
+                                "p": float(fit.pvalues[treatment]),
+                                "p_wild_bootstrap": _wild_pvalue(y_sample, regressors, treatment, beta, seed=seed)
+                                if h in RETENTION_HORIZONS and outcome == "deposits_dpsacb"
+                                else np.nan,
+                                "n": int(fit.nobs),
+                                "spec_flags": spec_note,
+                                "uniform_band_lower": np.nan,
+                                "uniform_band_upper": np.nan,
+                                "p_event_permutation": np.nan,
+                            }
+                        )
             dy = y_level.diff()
-            x_fdl = pd.DataFrame(index=sample.index)
+            fdl_mask = _sample_mask(panel.index, sample_name, 0) & ~_window_overlaps_pandemic(panel.index, -1) if sample_name == "ex_pandemic" else pd.Series(True, index=panel.index)
+            x_fdl = pd.DataFrame(index=panel.index)
             fdl_cols_by_flow: dict[str, list[str]] = {}
             for flow in FLOW_BUCKETS:
                 cols: list[str] = []
                 for lag in range(14):
                     col = f"{flow}_fdl_lag{lag}"
-                    x_fdl[col] = sample[flow].shift(lag)
+                    x_fdl[col] = panel[flow].shift(lag)
                     cols.append(col)
                 fdl_cols_by_flow[flow] = cols
             for col in cal_controls:
-                if col in sample.columns:
-                    x_fdl[col] = sample[col]
-            fit = _ols_hac(dy, x_fdl, maxlags=17)
+                if col in panel.columns:
+                    x_fdl[col] = panel[col]
+            fit = _ols_hac(dy.loc[fdl_mask], x_fdl.loc[fdl_mask], maxlags=17)
             if fit is None:
                 continue
             cov = fit.cov_params()
@@ -583,11 +877,14 @@ def estimate_disbursement_lps(flows: pd.DataFrame, calendar: pd.DataFrame, weekl
                             "beta": cumulative,
                             "se": float(np.sqrt(max(variance, 0.0))) if np.isfinite(variance) else np.nan,
                             "p": np.nan,
-                            "p_wild_bootstrap": np.nan,
+                            "p_wild_bootstrap": _wild_pvalue_sum(dy.loc[fdl_mask], x_fdl.loc[fdl_mask], cols_h, cumulative, seed=20260704 + len(rows) * 17)
+                            if h in RETENTION_HORIZONS and outcome == "deposits_dpsacb"
+                            else np.nan,
                             "n": int(fit.nobs),
-                            "spec_flags": "one-week delta outcome; current plus 13 lag distributed-lag cumulation",
+                            "spec_flags": "one-week delta outcome; current plus 13 lag distributed-lag cumulation; shifts built on full panel before sample drops",
                             "uniform_band_lower": np.nan,
                             "uniform_band_upper": np.nan,
+                            "p_event_permutation": np.nan,
                         }
                     )
     est = pd.DataFrame(rows)
@@ -601,26 +898,95 @@ def estimate_disbursement_lps(flows: pd.DataFrame, calendar: pd.DataFrame, weekl
     return est
 
 
+def _attempt_official_ssa_oact_fetch() -> dict[str, object]:
+    try:
+        req = Request(SSA_OACT_PAYMENT_URL, headers={"User-Agent": "tdchf-research/0.1"})
+        with urlopen(req, timeout=30) as response:
+            payload = response.read(4096)
+        text = payload.decode("utf-8", errors="replace")
+        usable = "Payment summary" in text and "Cyclical payment" in text
+        return {
+            "url": SSA_OACT_PAYMENT_URL,
+            "status": "fetched_metadata" if usable else "fetched_unparsed",
+            "http_status": 200,
+            "usable_cycle_dollars": False,
+            "detail": "Official SSA/OACT payment page was reachable but no machine-readable cycle-dollar table was parsed.",
+        }
+    except HTTPError as exc:
+        return {
+            "url": SSA_OACT_PAYMENT_URL,
+            "status": "fetch_failed",
+            "http_status": int(exc.code),
+            "usable_cycle_dollars": False,
+            "detail": f"Official SSA/OACT payment page request failed: HTTP {exc.code}.",
+        }
+    except (URLError, TimeoutError, OSError) as exc:
+        return {
+            "url": SSA_OACT_PAYMENT_URL,
+            "status": "fetch_failed",
+            "http_status": None,
+            "usable_cycle_dollars": False,
+            "detail": f"Official SSA/OACT payment page request failed: {type(exc).__name__}: {exc}.",
+        }
+
+
+def _predicted_ssa_cycle_dollars(flows: pd.DataFrame, calendar: pd.DataFrame) -> pd.Series:
+    cal = calendar.set_index("date").sort_index()
+    benefits = pd.to_numeric(flows["du_core_benefits_bn"], errors="coerce").sort_index()
+    monthly_benefits = benefits.groupby(benefits.index.to_period("M")).sum(min_count=1)
+    lagged_monthly = monthly_benefits.shift(1)
+    cycle_counts = pd.to_numeric(cal.get("ssa_cycle_payment_count", 0), errors="coerce").fillna(0.0)
+    month_cycle_total = cycle_counts.groupby(cycle_counts.index.to_period("M")).transform("sum").replace(0, np.nan)
+    shares = cycle_counts / month_cycle_total
+    lagged_for_week = pd.Series(cal.index.to_period("M"), index=cal.index).map(lagged_monthly).astype(float)
+    return (shares * lagged_for_week).reindex(flows.index).fillna(0.0).rename("ssa_predicted_cycle_benefits_bn")
+
+
 def estimate_ssa_proxy_lane(flows: pd.DataFrame, calendar: pd.DataFrame, weekly_state: pd.DataFrame) -> dict[str, object]:
     panel = flows.join(calendar.set_index("date"), how="left").join(weekly_state, how="left").dropna(subset=["du_core_benefits_bn"])
     panel = panel.loc[panel.index >= pd.Timestamp("2013-04-01")]
-    if "broad_deposits_nsa" not in panel.columns or panel["ssa_cycle_payment_count"].sum() == 0:
+    fetch = _attempt_official_ssa_oact_fetch()
+    panel["ssa_predicted_cycle_benefits_bn"] = _predicted_ssa_cycle_dollars(flows, calendar).reindex(panel.index)
+    controls = ["tax_due_week", "coupon_week", "legacy_third_count", "ssi_first_count"]
+    controls = [col for col in controls if col in panel.columns]
+    if "broad_deposits_nsa" not in panel.columns or panel["ssa_predicted_cycle_benefits_bn"].sum() == 0:
         return {"status": "skipped", "reason": "missing deposits or SSA cycle calendar"}
-    x = sm.add_constant(panel[["ssa_cycle_payment_count", "tax_due_week", "coupon_week"]], has_constant="add")
+    xcols = ["ssa_predicted_cycle_benefits_bn", *controls]
+    x = sm.add_constant(panel[xcols], has_constant="add")
     fs = sm.OLS(panel["du_core_benefits_bn"], x).fit(cov_type="HC1")
-    fstat = float(fs.tvalues["ssa_cycle_payment_count"] ** 2)
+    fstat = float(fs.tvalues["ssa_predicted_cycle_benefits_bn"] ** 2)
     y = panel["broad_deposits_nsa"].shift(-4) - panel["broad_deposits_nsa"].shift(1)
-    rf_sample = pd.concat([y.rename("y"), panel[["ssa_cycle_payment_count", "tax_due_week", "coupon_week"]]], axis=1).dropna()
-    rf = sm.OLS(rf_sample["y"], sm.add_constant(rf_sample[["ssa_cycle_payment_count", "tax_due_week", "coupon_week"]], has_constant="add")).fit(cov_type="HC1")
+    rf_sample = pd.concat([y.rename("y"), panel[xcols]], axis=1).dropna()
+    rf = sm.OLS(rf_sample["y"], sm.add_constant(rf_sample[xcols], has_constant="add")).fit(cov_type="HC1")
+    perm_p = _permutation_pvalue(
+        rf_sample,
+        y_col="y",
+        event_col="ssa_predicted_cycle_benefits_bn",
+        control_cols=controls,
+        beta=float(rf.params["ssa_predicted_cycle_benefits_bn"]),
+        seed=20260704,
+    )
+    iv_beta = np.nan
+    iv_p = np.nan
+    if fstat >= 10:
+        first_stage_hat = fs.fittedvalues.rename("du_core_benefits_hat")
+        iv_sample = pd.concat([y.rename("y"), first_stage_hat, panel[controls]], axis=1).dropna()
+        iv = sm.OLS(iv_sample["y"], sm.add_constant(iv_sample[["du_core_benefits_hat", *controls]], has_constant="add")).fit(cov_type="HC1")
+        iv_beta = float(iv.params["du_core_benefits_hat"])
+        iv_p = float(iv.pvalues["du_core_benefits_hat"])
     return {
-        "status": "proxy_only",
+        "status": "predicted_dollar_fallback",
+        "official_fetch": fetch,
         "first_stage_f": fstat,
-        "first_stage_beta": float(fs.params["ssa_cycle_payment_count"]),
-        "reduced_form_h4_beta": float(rf.params["ssa_cycle_payment_count"]),
-        "reduced_form_h4_p": float(rf.pvalues["ssa_cycle_payment_count"]),
+        "first_stage_beta": float(fs.params["ssa_predicted_cycle_benefits_bn"]),
+        "reduced_form_h4_beta": float(rf.params["ssa_predicted_cycle_benefits_bn"]),
+        "reduced_form_h4_p": float(rf.pvalues["ssa_predicted_cycle_benefits_bn"]),
+        "p_event_permutation": perm_p,
+        "iv_h4_beta": iv_beta,
+        "iv_h4_p": iv_p,
         "n": int(rf.nobs),
-        "verdict": "weak_or_proxy" if fstat < 10 else "proxy_strong_first_stage",
-        "note": "Official SSA/OACT cycle-dollar source is not in repo; this is a schedule-count proxy, not the reviewed primary IV.",
+        "verdict": "weak_predicted_dollar_fallback" if fstat < 10 else "strong_predicted_dollar_fallback",
+        "note": "Instrument is cycle-share times lagged monthly DTS benefit totals assigned to exact H.8 weeks; legacy 3rd-of-month and SSI weeks are separate controls, not the omitted control group.",
     }
 
 
@@ -632,10 +998,19 @@ def estimate_tax_deadline_lane(flows: pd.DataFrame, calendar: pd.DataFrame, week
     xcols = ["tax_due_week", "tax_withheld_bn", "coupon_week"]
     sample = pd.concat([y.rename("y"), panel[xcols]], axis=1).replace([np.inf, -np.inf], np.nan).dropna()
     fit = sm.OLS(sample["y"], sm.add_constant(sample[xcols], has_constant="add")).fit(cov_type="HC1")
+    perm_p = _permutation_pvalue(
+        sample,
+        y_col="y",
+        event_col="tax_due_week",
+        control_cols=["tax_withheld_bn", "coupon_week"],
+        beta=float(fit.params["tax_due_week"]),
+        seed=20260704,
+    )
     return {
         "status": "descriptive_event_time",
         "tax_due_h4_beta": float(fit.params["tax_due_week"]),
         "tax_due_h4_p": float(fit.pvalues["tax_due_week"]),
+        "p_event_permutation": perm_p,
         "n": int(fit.nobs),
         "verdict": "descriptive_only_realized_size_endogenous",
         "note": "Realized receipt size is not used as treatment; withheld receipts and coupon week are controlled.",
@@ -659,7 +1034,7 @@ def write_disbursement_readout(
         & estimates["treatment_id"].isin(["du_core_outflows_bn", "tax_receipts_bn"])
         & estimates["sample"].isin(["full", "ex_pandemic"])
         & estimates["horizon"].isin(RETENTION_HORIZONS)
-        & estimates["spec_type"].isin(["LP", "FDL"])
+        & estimates["spec_type"].isin(["LP_lead_controlled", "FDL", "LP_naive"])
     ].copy()
     if not ret.empty:
         beta0 = ret.loc[ret["horizon"].eq(0), ["sample", "treatment_id", "spec_type", "beta"]].rename(columns={"beta": "beta0"})
@@ -668,22 +1043,44 @@ def write_disbursement_readout(
         show = ret[["sample", "spec_type", "treatment_id", "horizon", "beta", "retention_ratio", "se", "p_wild_bootstrap", "n"]].round(4)
     else:
         show = pd.DataFrame()
-    placebo = estimates.loc[estimates["spec_type"].eq("LP") & estimates["horizon"].isin([-4, -3, -2]) & estimates["sample"].eq("full")]
+    impact = estimates.loc[
+        estimates["outcome"].eq("deposits_dpsacb")
+        & estimates["treatment_id"].eq("du_core_outflows_bn")
+        & estimates["horizon"].eq(0)
+        & estimates["sample"].isin(["full", "ex_pandemic"])
+        & estimates["spec_type"].isin(["LP_lead_controlled", "FDL"]),
+        ["sample", "spec_type", "beta", "se", "n"],
+    ].round(4)
+    placebo = estimates.loc[
+        estimates["spec_type"].eq("LP_lead_controlled") & estimates["horizon"].isin([-4, -3, -2]) & estimates["sample"].eq("full")
+    ]
     placebo_rate = f"{int((placebo['p'] < 0.05).sum())}/{len(placebo)}" if not placebo.empty else "0/0"
     unmapped = int((~crosswalk["mapped"] & crosswalk["above_threshold"]).sum()) if not crosswalk.empty else 0
     residual = float(weekly["dts_reconciliation_error_bn"].abs().dropna().median()) if "dts_reconciliation_error_bn" in weekly else np.nan
+    ssa_fetch = ssa.get("official_fetch", {}) if isinstance(ssa.get("official_fetch", {}), dict) else {}
+    seam_anchor = seam.get("annual_anchor_totals_bn", {})
     lines = [
         "# DTS Disbursement-Side LP Readout",
         "",
         "Mechanical-impact benchmark: the expected beta0 for core outflows is approximately the commercial-bank landing share, not one by construction. H.8 excludes thrifts, credit unions, Direct Express prepaid balances, and foreign recipients; beta0 is a plumbing/perimeter check, while beta4/beta8/beta13 and retention ratios are the evidence on persistence.",
         "",
-        f"DTS coverage: weekly flow panel {weekly.index.min().date()} through {weekly.index.max().date()}, {len(weekly)} H.8 Thursday-to-Wednesday windows.",
-        f"Seam-stitching verdict: {seam.get('verdict')} ({seam.get('last_dedicated_date')} dedicated through {seam.get('first_table_ii_date')} Table II start). {seam.get('note')}",
-        f"Crosswalk rows: {len(crosswalk)}. Unmapped above threshold: {unmapped}. Median absolute Table II reconciliation residual: {residual:.4f} bn.",
-        "",
-        "## Retention Table",
+        "Corrected beta0 landing-share check:",
         "",
     ]
+    lines.extend(_markdown_table(impact))
+    lines.extend(
+        [
+            "",
+            "Lead-controlled LP is the headline persistence path. LP_naive is retained only as the recurring-schedule-contaminated comparison; FDL is the distributed-lag companion.",
+            "",
+            f"DTS coverage: weekly flow panel {weekly.index.min().date()} through {weekly.index.max().date()}, {len(weekly)} H.8 Thursday-to-Wednesday windows.",
+            f"Seam-stitching verdict: {seam.get('verdict')} ({seam.get('last_dedicated_date')} dedicated through {seam.get('first_table_ii_date')} Table II start). Annual anchor continuity ok={seam.get('annual_anchor_continuity_ok')}; 2022-2024 component totals={seam_anchor}. {seam.get('note')}",
+            f"Crosswalk rows: {len(crosswalk)}. Unmapped above threshold: {unmapped}. Median absolute Table II reconciliation residual: {residual:.4f} bn.",
+            "",
+            "## Retention Table",
+            "",
+        ]
+    )
     lines.extend(_markdown_table(show))
     lines.extend(
         [
@@ -691,10 +1088,11 @@ def write_disbursement_readout(
             "## Mirrors And Lanes",
             "",
             "Deposit, reserve, Wednesday TGA, ON RRP, MMF, and bank-credit sensitivity rows are in `dts_disbursement_lp_estimates.csv` where source series exist. WTREGEN is kept as week-average TGA sensitivity; WDTGAL is the Wednesday-level TGA mirror.",
-            f"SSA lane verdict: {ssa.get('verdict', ssa.get('status'))}; first-stage F={ssa.get('first_stage_f', np.nan):.3g}; reduced-form h4 beta={ssa.get('reduced_form_h4_beta', np.nan):.3g}, p={ssa.get('reduced_form_h4_p', np.nan):.3g}. {ssa.get('note', '')}",
-            f"Tax-deadline lane verdict: {tax_lane.get('verdict', tax_lane.get('status'))}; h4 deadline beta={tax_lane.get('tax_due_h4_beta', np.nan):.3g}, p={tax_lane.get('tax_due_h4_p', np.nan):.3g}. {tax_lane.get('note', '')}",
+            f"SSA official fetch: {ssa_fetch.get('status', 'not_attempted')} at {ssa_fetch.get('url', '')}; detail={ssa_fetch.get('detail', '')}",
+            f"SSA lane verdict: {ssa.get('verdict', ssa.get('status'))}; first-stage F={ssa.get('first_stage_f', np.nan):.3g}; reduced-form h4 beta={ssa.get('reduced_form_h4_beta', np.nan):.3g}, p={ssa.get('reduced_form_h4_p', np.nan):.3g}, permutation p={ssa.get('p_event_permutation', np.nan):.3g}; 2SLS h4 beta={ssa.get('iv_h4_beta', np.nan):.3g}, p={ssa.get('iv_h4_p', np.nan):.3g}. {ssa.get('note', '')}",
+            f"Tax-deadline lane verdict: {tax_lane.get('verdict', tax_lane.get('status'))}; h4 deadline beta={tax_lane.get('tax_due_h4_beta', np.nan):.3g}, p={tax_lane.get('tax_due_h4_p', np.nan):.3g}, permutation p={tax_lane.get('p_event_permutation', np.nan):.3g}. {tax_lane.get('note', '')}",
             f"Descriptive lead placebo rate: {placebo_rate} significant at 5 percent.",
-            "Event-lane placebo/permutation rate: not implemented as a full randomization design in this bounded build; tax lane is descriptive only and the SSA lane is proxy-only pending official cycle dollars.",
+            "Event-lane permutation inference is within-year event-label permutation with 999 seeded draws; tax remains descriptive event-time and SSA is disclosed as a fallback-dollar weak/strong lane according to the first-stage F.",
             "",
             "## Falsification Map",
             "",
@@ -703,7 +1101,7 @@ def write_disbursement_readout(
             "Perimeter/measurement failure: no plausible beta0 for core-DU credits despite clean Wednesday-level TGA/reserve accounting.",
             "Artifact flag: any headline that exists only on the net treatment and dies when gross credits and drains are separated.",
             "",
-            "Claim boundary: descriptive weekly-flow evidence; quasi-experiments identify their specific margins where valid. This should be read alongside the QRA absorption-null evidence in `qra_event_lp_readout.md`.",
+            "Corrected claim boundary: descriptive weekly-flow evidence supports a mechanical landing-share/plumbing check. Persistence requires the lead-controlled and FDL rows, not the naive LP path. Quasi-experiments identify their specific margins where valid; this should be read alongside the QRA absorption-null evidence in `qra_event_lp_readout.md`.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
