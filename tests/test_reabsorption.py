@@ -3,12 +3,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from tdchf.disbursement import FLOW_BUCKETS
 from tdchf.reabsorption import (
     build_reabsorption_state_weekly,
+    calibrate_random_walk_placebo,
     estimate_state_interacted_retention,
     fit_exponential_decay,
 )
+from tdchf.qra_event_lp import normalize_weekly_panel_units
 
 
 def test_reabsorption_state_alignment_lags_and_fdic_break(tmp_path) -> None:
@@ -60,37 +61,30 @@ def test_decay_fit_recovers_known_half_life() -> None:
     assert fit.r2 > 0.999
 
 
-def test_seeded_random_walk_placebo_interaction_is_not_flagged() -> None:
-    n = 180
-    dates = pd.date_range("2016-01-06", periods=n, freq="W-WED")
-    rng = np.random.default_rng(20260704)
-    flows = pd.DataFrame(index=dates)
-    for col in FLOW_BUCKETS:
-        flows[col] = rng.normal(0.0, 1.0, n)
-    deposits = 100.0 + (0.6 * flows["du_core_outflows_bn"] - 0.4 * flows["tax_receipts_bn"]).cumsum()
-    weekly = pd.DataFrame(
-        {
-            "broad_deposits_nsa": deposits + rng.normal(0.0, 0.05, n),
-            "reserves": 1000.0,
-            "onrrp": 0.0,
-        },
-        index=dates,
+def test_seeded_multi_seed_placebo_calibration_reproduces_false_positive_rates(tmp_path) -> None:
+    flows = pd.read_csv("data/processed/dts_weekly_flow_decomposition.csv", parse_dates=["date"]).set_index("date")
+    calendar = pd.read_csv("data/processed/fiscal_calendar_weekly.csv", parse_dates=["date"])
+    weekly = normalize_weekly_panel_units(pd.read_csv("data/processed/tdc_weekly_channel_panel.csv", parse_dates=["date"]).set_index("date"))
+    state = build_reabsorption_state_weekly(
+        raw_state_csv="data/raw/fred_reabsorption_state_sources.csv",
+        out_csv=tmp_path / "reabsorption_state_test.csv",
+        start=flows.index.min(),
+        end=flows.index.max(),
     )
-    calendar = pd.DataFrame({"date": dates})
-    state = pd.DataFrame({"random_walk_placebo_state_lag1": np.cumsum(rng.normal(0.0, 1.0, n))}, index=dates)
-
     estimates = estimate_state_interacted_retention(
         flows,
         calendar,
         weekly,
         state,
-        state_columns={"random_walk_placebo": "random_walk_placebo_state_lag1"},
-        samples=["ex_pandemic"],
-        outcomes={"deposits_dpsacb": "broad_deposits_nsa"},
-        interaction_bootstrap_reps=19,
+        interaction_bootstrap_reps=0,
+        compute_moving_block_wild=False,
     )
-    ref = estimates.loc[estimates["horizon"].isin([2, 4, 8])]
+    calibration = calibrate_random_walk_placebo(flows, calendar, weekly, state, estimates)
+    by_h = calibration.set_index("horizon")
 
-    assert not ref.empty
-    assert ref["p_moving_block_wild"].notna().all()
-    assert (ref["p_moving_block_wild"] >= 0.05).all()
+    assert by_h.loc[4, "placebo_seed_count"] == 20
+    assert by_h.loc[8, "placebo_seed_count"] == 20
+    assert abs(by_h.loc[4, "placebo_false_positive_rate"] - 0.45) < 1e-9
+    assert abs(by_h.loc[8, "placebo_false_positive_rate"] - 0.40) < 1e-9
+    assert abs(by_h.loc[4, "placebo_effective_p"] - 0.25) < 1e-9
+    assert abs(by_h.loc[8, "placebo_effective_p"] - 0.05) < 1e-9
