@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ FISCALDATA_BASE = "https://api.fiscaldata.treasury.gov/services/api/fiscal_servi
 DTS_ACCOUNTING_BASE = f"{FISCALDATA_BASE}/v1/accounting/dts"
 DTS_OPERATING_CASH_BALANCE = "operating_cash_balance"
 DTS_DEPOSITS_WITHDRAWALS = "deposits_withdrawals_operating_cash"
+DTS_INCOME_TAX_REFUNDS = "income_tax_refunds_issued"
+DTS_FEDERAL_TAX_DEPOSITS = "federal_tax_deposits"
 
 
 def _utc_now_iso() -> str:
@@ -78,12 +81,22 @@ def iter_fiscaldata_rows(
     filters: list[str] | None = None,
     sort: str | None = None,
     page_size: int = 10_000,
+    max_workers: int = 1,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     rows: list[dict[str, object]] = []
-    first_meta: dict[str, object] = {}
-    page_number = 1
-    while True:
-        url = fiscaldata_url(
+    url = fiscaldata_url(endpoint, fields=fields, filters=filters, sort=sort, page_number=1, page_size=page_size)
+    payload = fetch_fiscaldata_page(url)
+    page_rows = payload.get("data") or []
+    if not isinstance(page_rows, list):
+        raise ValueError("FiscalData response `data` must be a list")
+    first_meta: dict[str, object] = dict(payload.get("meta") or {})
+    first_meta["first_url"] = url
+    rows.extend(page_rows)
+    total_pages = int(first_meta.get("total-pages") or 1)
+    workers = max(1, min(int(max_workers), 12, total_pages))
+
+    def fetch_page(page_number: int) -> tuple[int, list[dict[str, object]]]:
+        page_url = fiscaldata_url(
             endpoint,
             fields=fields,
             filters=filters,
@@ -91,19 +104,27 @@ def iter_fiscaldata_rows(
             page_number=page_number,
             page_size=page_size,
         )
-        payload = fetch_fiscaldata_page(url)
+        payload = fetch_fiscaldata_page(page_url)
         page_rows = payload.get("data") or []
         if not isinstance(page_rows, list):
             raise ValueError("FiscalData response `data` must be a list")
-        if page_number == 1:
-            first_meta = dict(payload.get("meta") or {})
-            first_meta["first_url"] = url
-        rows.extend(page_rows)
-        total_pages = int((payload.get("meta") or {}).get("total-pages") or page_number)
-        if page_number >= total_pages or not page_rows:
-            break
-        page_number += 1
-    first_meta["pages_downloaded"] = page_number
+        return page_number, page_rows
+
+    if total_pages > 1 and workers == 1:
+        for page_number in range(2, total_pages + 1):
+            _, page_rows = fetch_page(page_number)
+            rows.extend(page_rows)
+    elif total_pages > 1:
+        pages: dict[int, list[dict[str, object]]] = {}
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(fetch_page, page_number): page_number for page_number in range(2, total_pages + 1)}
+            for future in as_completed(futures):
+                page_number, page_rows = future.result()
+                pages[page_number] = page_rows
+        for page_number in range(2, total_pages + 1):
+            rows.extend(pages[page_number])
+    first_meta["pages_downloaded"] = total_pages
+    first_meta["max_workers"] = workers
     return rows, first_meta
 
 
@@ -115,10 +136,18 @@ def write_fiscaldata_csv(
     filters: list[str] | None = None,
     sort: str | None = "record_date",
     page_size: int = 10_000,
+    max_workers: int = 1,
     manifest_json: str | Path | None = None,
 ) -> dict[str, object]:
     retrieved_at = _utc_now_iso()
-    rows, meta = iter_fiscaldata_rows(endpoint, fields=fields, filters=filters, sort=sort, page_size=page_size)
+    rows, meta = iter_fiscaldata_rows(
+        endpoint,
+        fields=fields,
+        filters=filters,
+        sort=sort,
+        page_size=page_size,
+        max_workers=max_workers,
+    )
     path = Path(out_csv)
     path.parent.mkdir(parents=True, exist_ok=True)
     columns = fields or sorted({key for row in rows for key in row})
@@ -133,6 +162,8 @@ def write_fiscaldata_csv(
         "filters": filters or [],
         "fields": fields or [],
         "sort": sort,
+        "page_size": page_size,
+        "max_workers": max_workers,
         "rows": len(rows),
         "meta": meta,
         "retrieved_at": retrieved_at,
@@ -149,6 +180,7 @@ def download_default_dts_sources(
     out_dir: str | Path = "data/raw/fiscaldata",
     start_date: str = "2005-01-01",
     page_size: int = 10_000,
+    max_workers: int = 12,
 ) -> dict[str, object]:
     root = Path(out_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -158,6 +190,32 @@ def download_default_dts_sources(
         "open_today_bal",
         "close_today_bal",
         "open_month_bal",
+        "src_line_nbr",
+        "record_calendar_year",
+        "record_calendar_month",
+    ]
+    refund_fields = [
+        "record_date",
+        "tax_refund_type",
+        "tax_refund_type_desc",
+        "tax_refund_today_amt",
+        "tax_refund_mtd_amt",
+        "table_nbr",
+        "table_nm",
+        "sub_table_name",
+        "src_line_nbr",
+        "record_calendar_year",
+        "record_calendar_month",
+    ]
+    tax_fields = [
+        "record_date",
+        "tax_deposit_type",
+        "tax_deposit_type_desc",
+        "tax_deposit_today_amt",
+        "tax_deposit_mtd_amt",
+        "table_nbr",
+        "table_nm",
+        "sub_table_name",
         "src_line_nbr",
         "record_calendar_year",
         "record_calendar_month",
@@ -180,6 +238,7 @@ def download_default_dts_sources(
         filters=[f"record_date:gte:{start_date}"],
         sort="record_date",
         page_size=page_size,
+        max_workers=max_workers,
     )
     remit = write_fiscaldata_csv(
         DTS_DEPOSITS_WITHDRAWALS,
@@ -188,20 +247,46 @@ def download_default_dts_sources(
         filters=[f"record_date:gte:{start_date}", "transaction_catg:eq:Federal Reserve Earnings"],
         sort="record_date",
         page_size=page_size,
+        max_workers=max_workers,
     )
     transactions = write_fiscaldata_csv(
         DTS_DEPOSITS_WITHDRAWALS,
         out_csv=root / "dts_deposits_withdrawals_operating_cash.csv",
         fields=remit_fields,
         filters=[f"record_date:gte:{start_date}"],
-        sort="record_date",
+        sort="record_date,src_line_nbr",
         page_size=page_size,
+        max_workers=max_workers,
+    )
+    refunds = write_fiscaldata_csv(
+        DTS_INCOME_TAX_REFUNDS,
+        out_csv=root / "dts_income_tax_refunds_issued.csv",
+        fields=refund_fields,
+        filters=[f"record_date:gte:{start_date}"],
+        sort="record_date,src_line_nbr",
+        page_size=page_size,
+        max_workers=max_workers,
+    )
+    tax_deposits = write_fiscaldata_csv(
+        DTS_FEDERAL_TAX_DEPOSITS,
+        out_csv=root / "dts_federal_tax_deposits.csv",
+        fields=tax_fields,
+        filters=[f"record_date:gte:{start_date}"],
+        sort="record_date,src_line_nbr",
+        page_size=page_size,
+        max_workers=max_workers,
     )
     return {
         "status": "ok",
         "out_dir": str(root),
         "start_date": start_date,
-        "sources": {"operating_cash_balance": ocb, "federal_reserve_earnings": remit, "deposits_withdrawals": transactions},
+        "sources": {
+            "operating_cash_balance": ocb,
+            "federal_reserve_earnings": remit,
+            "deposits_withdrawals": transactions,
+            "income_tax_refunds": refunds,
+            "federal_tax_deposits": tax_deposits,
+        },
     }
 
 

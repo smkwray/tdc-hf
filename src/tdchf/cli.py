@@ -8,6 +8,7 @@ from .auction_shocks import build_auction_size_shock, build_shock_bundle_csv, bu
 from .bootstrap import bootstrap_lp_iv_csv
 from .calendar_controls import add_calendar_controls_csv
 from .demo import run_demo
+from .disbursement import run_disbursement_lp_csv
 from .envelope import build_method_envelope
 from .figures import export_thesis_figures
 from .first_stage import run_first_stage_csv
@@ -127,12 +128,14 @@ def build_parser() -> argparse.ArgumentParser:
     fiscaldata.add_argument("--filters", default="", help="Comma-separated FiscalData filters")
     fiscaldata.add_argument("--sort", default="record_date", help="FiscalData sort expression")
     fiscaldata.add_argument("--page-size", type=int, default=10_000, help="FiscalData page size")
+    fiscaldata.add_argument("--max-workers", type=int, default=1, help="Parallel FiscalData page workers, capped at 12")
     fiscaldata.add_argument("--manifest-json", default=None, help="Optional retrieval manifest JSON path")
 
     dts = subparsers.add_parser("download-dts-fiscaldata", help="Download default DTS FiscalData sources used by the proxy")
     dts.add_argument("--out-dir", default="data/raw/fiscaldata", help="Output raw source directory")
     dts.add_argument("--start-date", default="2005-01-01", help="First record_date to download")
     dts.add_argument("--page-size", type=int, default=10_000, help="FiscalData page size")
+    dts.add_argument("--max-workers", type=int, default=12, help="Parallel FiscalData page workers, capped at 12")
 
     dts_ind = subparsers.add_parser("build-dts-fiscal-indicators", help="Build monthly indicators from downloaded DTS FiscalData")
     dts_ind.add_argument("--operating-cash-balance", default="data/raw/fiscaldata/dts_operating_cash_balance.csv")
@@ -368,6 +371,18 @@ def build_parser() -> argparse.ArgumentParser:
     qra_lp.add_argument("--gdp", default=None, help="Optional FRED GDP CSV; downloads data/raw/fred_gdp.csv if omitted")
     qra_lp.add_argument("--out", default="data/processed/qra_event_lp_estimates.csv", help="Output estimates CSV")
     qra_lp.add_argument("--readout", default="data/processed/qra_event_lp_readout.md", help="Output Markdown readout")
+
+    disb = subparsers.add_parser("run-disbursement-lp", help="Build DTS disbursement weekly flows and estimate persistence LPs")
+    disb.add_argument("--transactions", default="data/raw/fiscaldata/dts_deposits_withdrawals_operating_cash.csv")
+    disb.add_argument("--refunds", default="data/raw/fiscaldata/dts_income_tax_refunds_issued.csv")
+    disb.add_argument("--tax-deposits", default="data/raw/fiscaldata/dts_federal_tax_deposits.csv")
+    disb.add_argument("--operating-cash-balance", default="data/raw/fiscaldata/dts_operating_cash_balance.csv")
+    disb.add_argument("--weekly-state", default="data/processed/tdc_weekly_channel_panel.csv")
+    disb.add_argument("--weekly-flows", default="data/processed/dts_weekly_flow_decomposition.csv")
+    disb.add_argument("--calendar", default="data/processed/fiscal_calendar_weekly.csv")
+    disb.add_argument("--crosswalk", default="data/processed/dts_category_crosswalk.csv")
+    disb.add_argument("--out", default="data/processed/dts_disbursement_lp_estimates.csv")
+    disb.add_argument("--readout", default="data/processed/dts_disbursement_lp_readout.md")
     return parser
 
 
@@ -480,13 +495,19 @@ def main(argv: list[str] | None = None) -> int:
             filters=_split_csv_arg(args.filters),
             sort=args.sort,
             page_size=args.page_size,
+            max_workers=args.max_workers,
             manifest_json=args.manifest_json,
         )
         print(json.dumps(report, indent=2))
         return 0
 
     if args.command == "download-dts-fiscaldata":
-        report = download_default_dts_sources(out_dir=args.out_dir, start_date=args.start_date, page_size=args.page_size)
+        report = download_default_dts_sources(
+            out_dir=args.out_dir,
+            start_date=args.start_date,
+            page_size=args.page_size,
+            max_workers=args.max_workers,
+        )
         print(json.dumps(report, indent=2))
         return 0
 
@@ -808,6 +829,22 @@ def main(argv: list[str] | None = None) -> int:
             weekly_panel_csv=args.weekly_panel,
             gdp_csv=args.gdp,
             out_csv=args.out,
+            readout_md=args.readout,
+        )
+        print(json.dumps(report, indent=2))
+        return 0
+
+    if args.command == "run-disbursement-lp":
+        report = run_disbursement_lp_csv(
+            transactions_csv=args.transactions,
+            refunds_csv=args.refunds,
+            tax_deposits_csv=args.tax_deposits,
+            operating_cash_balance_csv=args.operating_cash_balance,
+            weekly_state_csv=args.weekly_state,
+            weekly_flows_csv=args.weekly_flows,
+            calendar_csv=args.calendar,
+            crosswalk_csv=args.crosswalk,
+            estimates_csv=args.out,
             readout_md=args.readout,
         )
         print(json.dumps(report, indent=2))
