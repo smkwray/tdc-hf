@@ -6,9 +6,11 @@
 
 # Claude auto-orientation stub (AI-tool refs; must stay private)
 CLAUDE.md
+AGENTS.md
 
 # Agent orchestration (prompts, handoff, delegates)
 do/
+.worktrees/
 
 # Internal docs not for the repo
 docs/

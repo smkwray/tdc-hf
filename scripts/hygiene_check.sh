@@ -3,9 +3,9 @@ set -euo pipefail
 
 # hygiene_check.sh — Repo hygiene scan for tracked-eligible files.
 #
-# Enforces the rules in memory-system.md § Git hygiene:
+# Enforces the repository's tracked-surface hygiene rules:
 #   - no full system paths (/Users/..., /home/...) in tracked-eligible files
-#   - no references to ../data.md or sibling data inventory paths in src/, tests/, configs/
+#   - no references to ../data.md or sibling data inventory paths in src/, tests/, config/
 #   - git diff --check passes
 #
 # Warns (does not fail) on:
@@ -37,7 +37,7 @@ fi
 
 # Tracked-eligible source roots. Override via HYGIENE_SCAN_ROOTS env var
 # if your project uses a different layout.
-SCAN_ROOTS=(${HYGIENE_SCAN_ROOTS:-src scripts configs tests})
+SCAN_ROOTS=(${HYGIENE_SCAN_ROOTS:-src scripts config tests})
 TOP_LEVEL_FILES=(README.md CITATION.cff pyproject.toml setup.py setup.cfg)
 
 # Sibling project roots to also scan for cache leaks (space-separated).
@@ -62,7 +62,7 @@ gather_files() {
       | while read -r f; do
           [[ -z "$f" ]] && continue
           case "$f" in
-            do/*|docs/*|var/*|data/*|outputs/*|dist/*|.git/*) continue ;;
+            do/*|docs/*|var/*|data/*|output/*|outputs/*|dist/*|.git/*) continue ;;
           esac
           is_self_referential "$f" && continue
           for pat in "${SCAN_GLOBS[@]}"; do
@@ -114,7 +114,7 @@ fail_datamd=""
 for f in ${FILES[@]+"${FILES[@]}"}; do
   [[ -f "$f" ]] || continue
   case "$f" in
-    src/*|tests/*|configs/*)
+    src/*|tests/*|config/*)
       if hits="$(grep -nE '(/|\.\./)data\.md\b' "$f" 2>/dev/null)"; then
         while IFS= read -r line; do
           [[ -z "$line" ]] && continue
@@ -126,7 +126,7 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
 done
 
 if [[ -n "$fail_datamd" ]]; then
-  echo "hygiene_check: FAIL — sibling data inventory (data.md) referenced in source/tests/configs:" >&2
+  echo "hygiene_check: FAIL — sibling data inventory (data.md) referenced in source/tests/config:" >&2
   printf '%s' "$fail_datamd" >&2
   echo "  Fix: drop the data.md reference; the inventory is a coordination doc, not a code input." >&2
   violations=$((violations + 1))
