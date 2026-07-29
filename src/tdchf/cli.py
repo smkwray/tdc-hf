@@ -26,6 +26,7 @@ from .pipeline import run_monthly_proxy_pipeline
 from .pretrend import add_pretrend_controls_csv
 from .qra_borrowing import build_qra_borrowing_surprise_csv
 from .qra_event_lp import run_qra_event_lp_csv
+from .quarterly_bridge import build_quarterly_hf_bridge_csv
 from .reabsorption import run_reabsorption_halflife_csv
 from .readiness import readiness_payload
 from .reporting import (
@@ -384,6 +385,59 @@ def build_parser() -> argparse.ArgumentParser:
     disb.add_argument("--crosswalk", default="data/processed/dts_category_crosswalk.csv")
     disb.add_argument("--out", default="data/processed/dts_disbursement_lp_estimates.csv")
     disb.add_argument("--readout", default="data/processed/dts_disbursement_lp_readout.md")
+
+    bridge = subparsers.add_parser(
+        "build-quarterly-hf-bridge",
+        help="Build the deterministic OPEN-03 quarterly/high-frequency bridge",
+    )
+    bridge.add_argument(
+        "--transactions",
+        default="data/raw/fiscaldata/dts_deposits_withdrawals_operating_cash.csv",
+    )
+    bridge.add_argument(
+        "--refunds",
+        default="data/raw/fiscaldata/dts_income_tax_refunds_issued.csv",
+    )
+    bridge.add_argument(
+        "--tax-deposits",
+        default="data/raw/fiscaldata/dts_federal_tax_deposits.csv",
+    )
+    bridge.add_argument(
+        "--weekly-flows",
+        default="data/processed/dts_weekly_flow_decomposition.csv",
+    )
+    bridge.add_argument(
+        "--crosswalk",
+        default="data/processed/dts_category_crosswalk.csv",
+    )
+    bridge.add_argument(
+        "--legacy-proxy",
+        default="data/processed/fred_denton_proxy/tdc_monthly_proxy.csv",
+    )
+    bridge.add_argument(
+        "--legacy-components",
+        default="data/processed/fred_denton_proxy/tdc_monthly_components.csv",
+    )
+    bridge.add_argument(
+        "--legacy-quarterly-sums",
+        default="data/processed/fred_denton_proxy/tdc_monthly_quarterly_sums.csv",
+    )
+    bridge.add_argument(
+        "--legacy-validation",
+        default="data/processed/fred_denton_proxy/tdc_validation_report.json",
+    )
+    bridge.add_argument(
+        "--tdc-estimates",
+        default="../tdcest/data/processed/tdc_estimates.csv",
+    )
+    bridge.add_argument(
+        "--tdc-handoff",
+        default="../tdcest/data/processed/tdc_downstream_handoff_bundle.json",
+    )
+    bridge.add_argument(
+        "--out",
+        default="output/tables/quarterly_hf_bridge.csv",
+    )
 
     reabs = subparsers.add_parser("run-reabsorption-halflife", help="Estimate state-conditional disbursement reabsorption half-lives")
     reabs.add_argument("--flows", default="data/processed/dts_weekly_flow_decomposition.csv")
@@ -879,5 +933,27 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2))
         return 0
 
+    if args.command == "build-quarterly-hf-bridge":
+        report = build_quarterly_hf_bridge_csv(
+            transactions_csv=args.transactions,
+            refunds_csv=args.refunds,
+            tax_deposits_csv=args.tax_deposits,
+            weekly_flows_csv=args.weekly_flows,
+            crosswalk_csv=args.crosswalk,
+            tdc_estimates_csv=args.tdc_estimates,
+            tdc_handoff_json=args.tdc_handoff,
+            legacy_proxy_csv=args.legacy_proxy,
+            legacy_components_csv=args.legacy_components,
+            legacy_quarterly_sums_csv=args.legacy_quarterly_sums,
+            legacy_validation_json=args.legacy_validation,
+            out_csv=args.out,
+        )
+        print(json.dumps(report, indent=2))
+        return 0
+
     parser.error(f"Unknown command: {args.command}")
     return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
