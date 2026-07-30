@@ -4,7 +4,7 @@ set -euo pipefail
 # hygiene_check.sh — Repo hygiene scan for tracked-eligible files.
 #
 # Enforces the repository's tracked-surface hygiene rules:
-#   - no full system paths (/Users/..., /home/...) in tracked-eligible files
+#   - no absolute user-profile paths in tracked-eligible files
 #   - no references to ../data.md or sibling data inventory paths in src/, tests/, config/
 #   - git diff --check passes
 #
