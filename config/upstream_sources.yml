@@ -33,16 +33,20 @@ repos:
       processed_source_contracts: data/processed
 
 contracts:
+  # Legacy five-component contract used by the Denton monthly comparison.
   quarterly_anchor:
+    role: legacy_five_component_denton_input
     date_column: date
     frequency: quarterly
     required_components:
       - fed_tsy_tx
       - bank_depository_tsy_tx
       - row_tsy_tx
-      - treasury_operating_cash_tx
+      - minus_treasury_operating_cash_tx
       - fed_remit_positive
+  # Generated monthly fields under the legacy Denton contract.
   monthly_components:
+    role: legacy_five_component_denton_output
     date_column: date
     frequency: monthly
     required_outputs:

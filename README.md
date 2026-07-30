@@ -5,11 +5,11 @@ diagnostics.
 
 ## About
 
-TDC-HF extends quarterly Treasury Deposit Component estimates to higher
-frequency measurement and diagnostic workflows. It provides reproducible data
-assembly, temporal benchmarking, local-projection analysis, IV diagnostics, and
-closeout checks for studying monthly Treasury, banking, and money-market
-channels.
+TDC-HF combines quarterly Treasury Deposit Component estimates with
+higher-frequency measurement and diagnostic workflows. It provides
+reproducible data assembly, temporal benchmarking, local-projection analysis,
+IV diagnostics, and closeout checks for studying monthly Treasury, banking, and
+money-market channels.
 
 This repository builds monthly and weekly datasets from public Treasury,
 Federal Reserve, FRED, FiscalData, TIC, and auction-context sources. The main
@@ -33,6 +33,7 @@ The package can generate:
 - monthly TDC proxy components benchmarked to quarterly anchors;
 - monthly proxy validation and method-comparison tables;
 - weekly Treasury-plumbing state panels;
+- a deterministic daily/weekly/quarterly Treasury-flow bridge;
 - TGA, fiscal-flow, category-flow, and auction shock measures;
 - LP, LP-IV, bootstrap, placebo, regime, and factor-control diagnostics;
 - closeout tables comparing IV, non-IV, and reduced-form designs.
@@ -77,6 +78,51 @@ Run a minimal demo:
 ```bash
 "$UV_PROJECT_ENVIRONMENT/bin/tdchf" demo --out output/demo
 ```
+
+## Deterministic Quarterly/High-Frequency Bridge
+
+Build the sparse bridge:
+
+```bash
+uv run python -B -m tdchf build-quarterly-hf-bridge \
+  --out output/tables/quarterly_hf_bridge.csv
+```
+
+The ignored CSV has 52 columns and five row types: `event_daily`,
+`h8_reconciliation`, `quarter_reconciliation`, `input_coverage`, and
+`quarter_anchor`. Observed events use the DTS settlement `record_date` for
+calendar-quarter assignment. They also retain the separate Thursday-through-
+Wednesday H.8 window ending Wednesday and a calendar-day quarter-end age bin
+(`0-7`, `8-30`, `31-60`, or `61+`).
+
+The observed lane keeps six source-signed streams separate: gross credits,
+gross drains, gross debt issuance, gross debt redemption, broad-outflow
+sidecar, and interest-outflow sidecar. It reconciles each stream independently
+at complete H.8 weeks and settlement-date quarters. Its outcome perimeter is
+H.8 commercial-bank deposits. The bridge is not a weekly TDC level, does not
+net observed flows into quarterly TDC, and does not refit a timed estimator.
+
+Quarterly comparison rows are distinct from observed timing. They contain the
+current Tier-2 headline
+`tdc_tier2_interest_corrected_bank_only_ru_flow`, the current
+`tdc_base_bank_only_ru_flow` comparison, and the legacy five-component Denton
+quarterly identity. The current comparisons have no intraquarter timing and no
+observed-versus-anchor accounting residual; the legacy comparison is labeled
+generated rather than observed.
+
+In addition to the project-local DTS, weekly, crosswalk, and validated legacy
+inputs, the command consumes these sibling `tdcest` outputs:
+
+- `../tdcest/data/processed/tdc_estimates.csv`
+- `../tdcest/data/processed/tdc_downstream_handoff_bundle.json`
+
+The estimates file supplies quarter-end values in USD millions for the exact
+Tier-2 and base columns above; the bridge scales them to USD billions without
+filling, extrapolating, or allocating them within the quarter. The handoff file
+must designate the Tier-2 series as the current corrected headline and retain
+the base series as a comparison. This current comparison contract is separate
+from the legacy five-component Denton contract in
+`config/upstream_sources.yml`.
 
 ## Main Specs
 

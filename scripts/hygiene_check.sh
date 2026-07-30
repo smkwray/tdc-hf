@@ -8,9 +8,6 @@ set -euo pipefail
 #   - no references to ../data.md or sibling data inventory paths in src/, tests/, config/
 #   - git diff --check passes
 #
-# Warns (does not fail) on:
-#   - AI tool name mentions in tracked-eligible files (deferred pre-public scrub)
-#
 # Usage:
 #   scripts/hygiene_check.sh              # scan the whole repo
 #   scripts/hygiene_check.sh --staged     # scan only staged paths (pre-commit)
@@ -47,7 +44,6 @@ SIBLING_PROJECTS=(${HYGIENE_SIBLING_PROJECTS:-})
 SCAN_GLOBS=("*.py" "*.md" "*.yml" "*.yaml" "*.toml" "*.sh" "*.ps1" "*.cfg" "*.ini")
 
 violations=0
-warnings=0
 
 is_self_referential() {
   case "$1" in
@@ -132,29 +128,7 @@ if [[ -n "$fail_datamd" ]]; then
   violations=$((violations + 1))
 fi
 
-# --- Check 3: AI tool name mentions in tracked-eligible files (WARN) ---
-warn_ai=""
-for f in ${FILES[@]+"${FILES[@]}"}; do
-  [[ -f "$f" ]] || continue
-  if hits="$(grep -niE '\b(codex|claude|gpt[- ]?pro|gpt-?5|openai|anthropic|\borca\b|\bmako\b|\bdairy\b|\btandy\b)\b' "$f" 2>/dev/null)"; then
-    while IFS= read -r line; do
-      [[ -z "$line" ]] && continue
-      warn_ai+="${f}:${line}"$'\n'
-    done <<< "$hits"
-  fi
-done
-
-if [[ -n "$warn_ai" ]]; then
-  ai_count="$(printf '%s' "$warn_ai" | grep -c .)"
-  echo "hygiene_check: WARN — ${ai_count} AI/tool-name mention(s) in tracked-eligible files (deferred pre-public scrub):" >&2
-  printf '%s' "$warn_ai" | head -20 >&2
-  if [[ "$ai_count" -gt 20 ]]; then
-    echo "  ... and $((ai_count - 20)) more." >&2
-  fi
-  warnings=$((warnings + 1))
-fi
-
-# --- Check 4: git diff --check (FAIL); staged mode checks the index (--cached) ---
+# --- Check 3: git diff --check (FAIL); staged mode checks the index (--cached) ---
 if [[ "$MODE" == "staged" ]]; then
   if ! git diff --cached --check 2>/dev/null; then
     echo "hygiene_check: FAIL — git diff --cached --check reported whitespace/conflict markers in staged content." >&2
@@ -167,16 +141,11 @@ else
   fi
 fi
 
-# (Repo-local .venv/cache directories are no longer policed — they're ignored by
-# git, Syncthing, rclone, and remrun, so they never propagate.)
+# Repo-local environments and caches are covered by ignore rules.
 
 if [[ "$violations" -gt 0 ]]; then
-  echo "hygiene_check: FAIL ($violations violation(s), $warnings warning(s))" >&2
+  echo "hygiene_check: FAIL ($violations violation(s))" >&2
   exit 1
 fi
 
-if [[ "$warnings" -gt 0 ]]; then
-  echo "hygiene_check: pass with $warnings warning(s)"
-else
-  echo "hygiene_check: pass"
-fi
+echo "hygiene_check: pass"

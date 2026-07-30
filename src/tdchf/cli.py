@@ -388,7 +388,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     bridge = subparsers.add_parser(
         "build-quarterly-hf-bridge",
-        help="Build the deterministic OPEN-03 quarterly/high-frequency bridge",
+        help="Build the deterministic quarterly/high-frequency bridge",
     )
     bridge.add_argument(
         "--transactions",

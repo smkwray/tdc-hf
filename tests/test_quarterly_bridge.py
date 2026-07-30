@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import re
+import subprocess
+import sys
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -605,3 +611,183 @@ def test_input_bundle_hash_is_order_invariant_and_mutation_sensitive() -> None:
     assert re.fullmatch(r"[0-9a-f]{64}", digest)
     assert reordered == digest
     assert mutated != digest
+
+
+def _write_source_manifest(
+    csv_path: Path,
+    *,
+    rows: int,
+    amount_column: str,
+) -> None:
+    payload = {
+        "rows": rows,
+        "endpoint": "https://example.invalid/fiscaldata",
+        "retrieved_at": "2024-04-04T00:00:00Z",
+        "meta": {"dataFormats": {amount_column: "$1,000,000"}},
+    }
+    manifest_path = csv_path.with_suffix(csv_path.suffix + ".manifest.json")
+    manifest_path.write_text(
+        json.dumps(payload, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _materialize_bridge_cli_inputs(tmp_path: Path) -> dict[str, Path]:
+    transactions, refunds, tax_deposits = _observed_inputs()
+    tax_deposits["record_date"] = "2024-03-29"
+    tax_deposits["src_line_nbr"] = range(1, len(tax_deposits) + 1)
+    source_frames = {
+        "transactions": (
+            transactions,
+            "transaction_today_amt",
+        ),
+        "refunds": (
+            refunds,
+            "tax_refund_today_amt",
+        ),
+        "tax_deposits": (
+            tax_deposits,
+            "tax_deposit_today_amt",
+        ),
+    }
+    paths: dict[str, Path] = {}
+    for name, (frame, amount_column) in source_frames.items():
+        path = tmp_path / f"{name}.csv"
+        frame.to_csv(path, index=False)
+        _write_source_manifest(
+            path,
+            rows=len(frame),
+            amount_column=amount_column,
+        )
+        paths[name] = path
+
+    weekly = pd.DataFrame({"date": [pd.Timestamp("2024-03-27")]})
+    for column in bridge.WEEKLY_REFERENCE_COLUMNS.values():
+        weekly[column] = 0.0
+    paths["weekly_flows"] = tmp_path / "weekly_flows.csv"
+    weekly.to_csv(paths["weekly_flows"], index=False)
+
+    crosswalk = pd.DataFrame(
+        {
+            "bucket": ["mapped"],
+            "above_threshold": [False],
+            "mapped": [True],
+        }
+    )
+    paths["crosswalk"] = tmp_path / "crosswalk.csv"
+    crosswalk.to_csv(paths["crosswalk"], index=False)
+
+    (
+        tdc_estimates,
+        handoff,
+        monthly_proxy,
+        monthly_components,
+        quarterly_sums,
+        validation,
+    ) = _anchor_inputs()
+    for name, frame in (
+        ("tdc_estimates", tdc_estimates),
+        ("legacy_proxy", monthly_proxy),
+        ("legacy_components", monthly_components),
+        ("legacy_quarterly_sums", quarterly_sums),
+    ):
+        path = tmp_path / f"{name}.csv"
+        frame.to_csv(path, index=False)
+        paths[name] = path
+    for name, payload in (
+        ("tdc_handoff", handoff),
+        ("legacy_validation", validation),
+    ):
+        path = tmp_path / f"{name}.json"
+        path.write_text(
+            json.dumps(payload, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        paths[name] = path
+    paths["out"] = tmp_path / "quarterly_hf_bridge.csv"
+    return paths
+
+
+def _run_bridge_cli(paths: dict[str, Path]) -> subprocess.CompletedProcess[str]:
+    repo_root = Path(__file__).resolve().parents[1]
+    environment = os.environ.copy()
+    python_path = str(repo_root / "src")
+    if environment.get("PYTHONPATH"):
+        python_path = python_path + os.pathsep + environment["PYTHONPATH"]
+    environment["PYTHONPATH"] = python_path
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tdchf",
+            "build-quarterly-hf-bridge",
+            "--transactions",
+            str(paths["transactions"]),
+            "--refunds",
+            str(paths["refunds"]),
+            "--tax-deposits",
+            str(paths["tax_deposits"]),
+            "--weekly-flows",
+            str(paths["weekly_flows"]),
+            "--crosswalk",
+            str(paths["crosswalk"]),
+            "--tdc-estimates",
+            str(paths["tdc_estimates"]),
+            "--tdc-handoff",
+            str(paths["tdc_handoff"]),
+            "--legacy-proxy",
+            str(paths["legacy_proxy"]),
+            "--legacy-components",
+            str(paths["legacy_components"]),
+            "--legacy-quarterly-sums",
+            str(paths["legacy_quarterly_sums"]),
+            "--legacy-validation",
+            str(paths["legacy_validation"]),
+            "--out",
+            str(paths["out"]),
+        ],
+        cwd=repo_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_bridge_cli_success_and_duplicate_failure_preserves_output(
+    tmp_path: Path,
+) -> None:
+    paths = _materialize_bridge_cli_inputs(tmp_path)
+
+    success = _run_bridge_cli(paths)
+    assert success.returncode == 0, success.stderr
+    report = json.loads(success.stdout)
+    assert report["status"] == "ok"
+    assert paths["out"].is_file()
+    output = pd.read_csv(paths["out"], low_memory=False)
+    assert tuple(output.columns) == EXPECTED_COLUMNS
+    assert set(output["row_type"]) == set(EXPECTED_ROW_TYPES)
+    assert set(
+        output.loc[output["row_type"].eq("event_daily"), "stream_id"]
+    ) == set(EXPECTED_STREAMS)
+    accepted_bytes = paths["out"].read_bytes()
+    assert hashlib.sha256(accepted_bytes).hexdigest() == report["output_sha256"]
+    assert not paths["out"].with_suffix(paths["out"].suffix + ".tmp").exists()
+
+    transactions = pd.read_csv(paths["transactions"], low_memory=False)
+    transactions = pd.concat(
+        [transactions, transactions.iloc[[0]]],
+        ignore_index=True,
+    )
+    transactions.to_csv(paths["transactions"], index=False)
+    _write_source_manifest(
+        paths["transactions"],
+        rows=len(transactions),
+        amount_column="transaction_today_amt",
+    )
+
+    failure = _run_bridge_cli(paths)
+    assert failure.returncode != 0
+    assert "duplicate raw keys" in failure.stderr
+    assert paths["out"].read_bytes() == accepted_bytes
+    assert not paths["out"].with_suffix(paths["out"].suffix + ".tmp").exists()

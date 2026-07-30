@@ -1668,7 +1668,7 @@ def build_quarterly_hf_bridge_csv(
     refunds_manifest_json: str | Path | None = None,
     tax_deposits_manifest_json: str | Path | None = None,
 ) -> dict[str, object]:
-    """Write the fail-closed deterministic OPEN-03 bridge without refitting."""
+    """Write the fail-closed quarterly/high-frequency bridge without refitting."""
     specs = {
         "transactions": (
             transactions_csv,

@@ -10,8 +10,7 @@ set -euo pipefail
 #
 #   2. Run scripts/hygiene_check.sh --staged on staged files: fails on
 #      absolute system paths, data.md references in src/tests/config,
-#      and git diff --check issues. AI tool name mentions are reported as
-#      warnings only.
+#      and git diff --check issues.
 #
 # Install once per clone:
 #   git config core.hooksPath .githooks
@@ -37,7 +36,7 @@ if [[ -n "$banned_hits" ]]; then
   printf '  %s\n' $banned_hits >&2
   echo "" >&2
   echo "These directories are private working state and must never be committed:" >&2
-  echo "  do/      — agent memory, handoff, todo, changes, plans" >&2
+  echo "  do/      — private project controls and coordination" >&2
   echo "  docs/    — private design docs" >&2
   echo "  var/     — async job state" >&2
   echo "  data/    — local data" >&2
@@ -45,7 +44,7 @@ if [[ -n "$banned_hits" ]]; then
   echo "  outputs/ — generated artifacts" >&2
   echo "  dist/    — build outputs" >&2
   echo "" >&2
-  echo "If something needs to be shared publicly, copy it to a tracked location" >&2
+  echo "If something belongs on the tracked surface, copy it to a tracked location" >&2
   echo "(README.md, src/, tests/, config/, scripts/) and recommit." >&2
   exit 1
 fi

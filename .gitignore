@@ -4,15 +4,15 @@
 # Environment
 .env
 
-# Claude auto-orientation stub (AI-tool refs; must stay private)
+# Private project controls
 CLAUDE.md
 AGENTS.md
 
-# Agent orchestration (prompts, handoff, delegates)
+# Private coordination state
 do/
 .worktrees/
 
-# Internal docs not for the repo
+# Local documentation
 docs/
 docs/*prompt*.md
 
