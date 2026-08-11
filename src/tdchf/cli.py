@@ -4,19 +4,33 @@ import argparse
 import json
 
 from .analysis_spec import run_analysis_spec
-from .auction_shocks import build_auction_size_shock, build_shock_bundle_csv, build_tga_rebuild_shock_csv
+from .auction_shocks import (
+    build_auction_size_shock,
+    build_shock_bundle_csv,
+    build_tga_rebuild_shock_csv,
+)
 from .bootstrap import bootstrap_lp_iv_csv
 from .calendar_controls import add_calendar_controls_csv
+from .channel_context import build_auction_context
 from .demo import run_demo
-from .disbursement import run_disbursement_lp_csv
+from .disbursement import run_disbursement_response_profile_csv
 from .envelope import build_method_envelope
-from .figures import export_thesis_figures
+from .figures import export_publication_figures
 from .first_stage import run_first_stage_csv
-from .fiscaldata import build_dts_fiscal_indicators_csv, build_dts_transaction_indicators_csv, download_default_dts_sources, write_fiscaldata_csv
+from .fiscaldata import (
+    build_dts_fiscal_indicators_csv,
+    build_dts_transaction_indicators_csv,
+    download_default_dts_sources,
+    write_fiscaldata_csv,
+)
 from .fred import write_fred_series_csv
 from .iv_robustness import run_iv_robustness_csv
 from .live_indicators import FRED_HF_SERIES, build_fred_monthly_indicators_csv
-from .local_sources import build_fiscal_indicator_csv, build_tic_row_indicator_csv, merge_indicator_csvs
+from .local_sources import (
+    build_fiscal_indicator_csv,
+    build_tic_row_indicator_csv,
+    merge_indicator_csvs,
+)
 from .lp import run_local_projections_csv, run_lp_iv_csv, run_lp_iv_placebo_csv
 from .manifest import write_file_manifest, write_spec_manifest
 from .method_status import write_method_status_csv
@@ -27,13 +41,12 @@ from .pretrend import add_pretrend_controls_csv
 from .qra_borrowing import build_qra_borrowing_surprise_csv
 from .qra_event_lp import run_qra_event_lp_csv
 from .quarterly_bridge import build_quarterly_hf_bridge_csv
-from .reabsorption import run_reabsorption_halflife_csv
 from .readiness import readiness_payload
 from .reporting import (
     compare_iv_robustness_summaries,
     compare_lp_results,
     compare_monthly_proxies,
-    export_thesis_status_report,
+    export_analysis_status_report,
     export_publication_tables,
     summarize_estimates_bundle,
     summarize_panel_csv,
@@ -42,7 +55,6 @@ from .reporting import (
 from .shocks import build_named_residual_shock_csv, build_residual_shock_csv
 from .upstream import resolve_repos
 from .weekly import build_weekly_channel_panel_csv, build_weekly_state_csv
-from .channel_context import build_auction_context
 
 
 def _split_csv_arg(value: str | None) -> list[str]:
@@ -242,7 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
     panel_summary.add_argument("--data", required=True, help="Input panel CSV")
     panel_summary.add_argument("--out", required=True, help="Output summary CSV")
 
-    estimates = subparsers.add_parser("summarize-estimates", help="Write compact thesis tables from LP and first-stage CSVs")
+    estimates = subparsers.add_parser("summarize-estimates", help="Write compact analysis tables from LP and first-stage CSVs")
     estimates.add_argument("--lp", required=True, help="LP or LP-IV result CSV")
     estimates.add_argument("--first-stage", default=None, help="Optional first-stage CSV")
     estimates.add_argument("--out-dir", required=True, help="Output directory")
@@ -263,7 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare_proxy.add_argument("--column", default="tdc_monthly", help="Proxy column")
     compare_proxy.add_argument("--out-dir", required=True, help="Output directory")
 
-    figs = subparsers.add_parser("export-figures", help="Export thesis-ready PNG figures from generated artifacts")
+    figs = subparsers.add_parser("export-figures", help="Export publication-ready PNG figures from generated artifacts")
     figs.add_argument("--proxy", required=True, help="Monthly proxy CSV")
     figs.add_argument("--components", default=None, help="Optional monthly components CSV")
     figs.add_argument("--envelope", default=None, help="Optional method envelope CSV")
@@ -309,16 +321,19 @@ def build_parser() -> argparse.ArgumentParser:
     lpcmp.add_argument("--right-label", default="right", help="Right label")
     lpcmp.add_argument("--out-dir", required=True, help="Output directory")
 
-    thesis = subparsers.add_parser("export-thesis-report", help="Export a consolidated Markdown thesis status report")
-    thesis.add_argument("--out-md", required=True, help="Output Markdown path")
-    thesis.add_argument("--publication-md", default=None, help="Publication table summary Markdown")
-    thesis.add_argument("--iv-robustness-md", default=None, help="IV robustness Markdown")
-    thesis.add_argument("--fiscal-flow-iv-md", default=None, help="DTS fiscal-flow IV robustness Markdown")
-    thesis.add_argument("--category-flow-iv-md", default=None, help="DTS category-flow IV robustness Markdown")
-    thesis.add_argument("--controlled-iv-md", default=None, help="Controlled IV comparison Markdown")
-    thesis.add_argument("--lp-comparison-md", default=None, help="LP comparison Markdown")
-    thesis.add_argument("--method-comparison-md", default=None, help="Proxy method comparison Markdown")
-    thesis.add_argument("--identification-md", default=None, help="Identification risk Markdown")
+    analysis_report = subparsers.add_parser(
+        "export-analysis-report",
+        help="Export a consolidated Markdown analysis status report",
+    )
+    analysis_report.add_argument("--out-md", required=True, help="Output Markdown path")
+    analysis_report.add_argument("--publication-md", default=None, help="Publication table summary Markdown")
+    analysis_report.add_argument("--iv-robustness-md", default=None, help="IV robustness Markdown")
+    analysis_report.add_argument("--fiscal-flow-iv-md", default=None, help="DTS fiscal-flow IV robustness Markdown")
+    analysis_report.add_argument("--category-flow-iv-md", default=None, help="DTS category-flow IV robustness Markdown")
+    analysis_report.add_argument("--controlled-iv-md", default=None, help="Controlled IV comparison Markdown")
+    analysis_report.add_argument("--lp-comparison-md", default=None, help="LP comparison Markdown")
+    analysis_report.add_argument("--method-comparison-md", default=None, help="Proxy method comparison Markdown")
+    analysis_report.add_argument("--identification-md", default=None, help="Identification risk Markdown")
 
     auction_shock = subparsers.add_parser("build-auction-size-shock", help="Build monthly auction-size surprise from local auction results")
     auction_shock.add_argument("--raw", required=True, help="Auction result CSV")
@@ -374,7 +389,10 @@ def build_parser() -> argparse.ArgumentParser:
     qra_lp.add_argument("--out", default="data/processed/qra_event_lp_estimates.csv", help="Output estimates CSV")
     qra_lp.add_argument("--readout", default="data/processed/qra_event_lp_readout.md", help="Output Markdown readout")
 
-    disb = subparsers.add_parser("run-disbursement-lp", help="Build DTS disbursement weekly flows and estimate persistence LPs")
+    disb = subparsers.add_parser(
+        "run-disbursement-response-profile",
+        help="Estimate horizon-specific cumulative H.8 deposit-stock response projections",
+    )
     disb.add_argument("--transactions", default="data/raw/fiscaldata/dts_deposits_withdrawals_operating_cash.csv")
     disb.add_argument("--refunds", default="data/raw/fiscaldata/dts_income_tax_refunds_issued.csv")
     disb.add_argument("--tax-deposits", default="data/raw/fiscaldata/dts_federal_tax_deposits.csv")
@@ -383,8 +401,8 @@ def build_parser() -> argparse.ArgumentParser:
     disb.add_argument("--weekly-flows", default="data/processed/dts_weekly_flow_decomposition.csv")
     disb.add_argument("--calendar", default="data/processed/fiscal_calendar_weekly.csv")
     disb.add_argument("--crosswalk", default="data/processed/dts_category_crosswalk.csv")
-    disb.add_argument("--out", default="data/processed/dts_disbursement_lp_estimates.csv")
-    disb.add_argument("--readout", default="data/processed/dts_disbursement_lp_readout.md")
+    disb.add_argument("--out", default="data/processed/dts_h8_response_profile_estimates.csv")
+    disb.add_argument("--readout", default="data/processed/dts_h8_response_profile_readout.md")
 
     bridge = subparsers.add_parser(
         "build-quarterly-hf-bridge",
@@ -439,17 +457,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="output/tables/quarterly_hf_bridge.csv",
     )
 
-    reabs = subparsers.add_parser("run-reabsorption-halflife", help="Estimate state-conditional disbursement reabsorption half-lives")
-    reabs.add_argument("--flows", default="data/processed/dts_weekly_flow_decomposition.csv")
-    reabs.add_argument("--calendar", default="data/processed/fiscal_calendar_weekly.csv")
-    reabs.add_argument("--weekly-panel", default="data/processed/tdc_weekly_channel_panel.csv")
-    reabs.add_argument("--raw-state", default="data/raw/fred_reabsorption_state_sources.csv")
-    reabs.add_argument("--state", default="data/processed/reabsorption_state_weekly.csv")
-    reabs.add_argument("--out", default="data/processed/reabsorption_halflife_estimates.csv")
-    reabs.add_argument("--readout", default="data/processed/reabsorption_halflife_readout.md")
-    reabs.add_argument("--contract", default="data/processed/reabsorption_state_contract.csv")
-    reabs.add_argument("--halflife-bootstrap-reps", type=int, default=999)
-    reabs.add_argument("--interaction-bootstrap-reps", type=int, default=999)
     return parser
 
 
@@ -758,7 +765,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "export-figures":
-        report = export_thesis_figures(
+        report = export_publication_figures(
             proxy_csv=args.proxy,
             components_csv=args.components,
             envelope_csv=args.envelope,
@@ -815,8 +822,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2))
         return 0
 
-    if args.command == "export-thesis-report":
-        report = export_thesis_status_report(
+    if args.command == "export-analysis-report":
+        report = export_analysis_status_report(
             out_md=args.out_md,
             publication_md=args.publication_md,
             iv_robustness_md=args.iv_robustness_md,
@@ -901,24 +908,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2))
         return 0
 
-    if args.command == "run-reabsorption-halflife":
-        report = run_reabsorption_halflife_csv(
-            flows_csv=args.flows,
-            calendar_csv=args.calendar,
-            weekly_panel_csv=args.weekly_panel,
-            raw_state_csv=args.raw_state,
-            state_csv=args.state,
-            estimates_csv=args.out,
-            readout_md=args.readout,
-            contract_csv=args.contract,
-            halflife_bootstrap_reps=args.halflife_bootstrap_reps,
-            interaction_bootstrap_reps=args.interaction_bootstrap_reps,
-        )
-        print(json.dumps(report, indent=2))
-        return 0
-
-    if args.command == "run-disbursement-lp":
-        report = run_disbursement_lp_csv(
+    if args.command == "run-disbursement-response-profile":
+        report = run_disbursement_response_profile_csv(
             transactions_csv=args.transactions,
             refunds_csv=args.refunds,
             tax_deposits_csv=args.tax_deposits,

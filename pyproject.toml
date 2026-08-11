@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tdchf"
 version = "0.1.0"
-description = "High-frequency Treasury Deposit Component proxy and Treasury-plumbing channel datasets"
+description = "High-frequency Treasury Deposit Component measurement and descriptive response-profile datasets"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

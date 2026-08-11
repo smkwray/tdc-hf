@@ -15,8 +15,8 @@ from .qra_event_lp import normalize_weekly_panel_units
 
 SEAM_LAST_DEDICATED = pd.Timestamp("2023-02-13")
 SEAM_FIRST_TABLE_II = pd.Timestamp("2023-02-14")
-HORIZONS = [-4, -3, -2, *range(0, 14)]
-RETENTION_HORIZONS = [0, 4, 8, 13]
+HORIZONS = [-4, -3, -2, *range(14)]
+PROFILE_REPORT_HORIZONS = [0, 4, 8, 13]
 PANDEMIC_BLOCK_QUARTERS = {"2020Q2", "2020Q3", "2020Q4", "2021Q1"}
 SSA_OACT_PAYMENT_URL = "https://www.ssa.gov/oact/progdata/payment.html"
 FLOW_BUCKETS = [
@@ -534,10 +534,10 @@ def build_weekly_flow_decomposition(
         "status": "ok",
         "out": str(path),
         "crosswalk": str(crosswalk_path),
-        "rows": int(len(out)),
+        "rows": len(out),
         "start": out.index.min().date().isoformat(),
         "end": out.index.max().date().isoformat(),
-        "crosswalk_rows": int(len(crosswalk)),
+        "crosswalk_rows": len(crosswalk),
         "unmapped_above_threshold": int((~crosswalk["mapped"] & crosswalk["above_threshold"]).sum()),
         "seam": seam,
     }
@@ -660,7 +660,7 @@ def build_fiscal_calendar_weekly(*, start: str, end: str, out_csv: str | Path) -
     path = Path(out_csv)
     path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(path, index=False)
-    return {"status": "ok", "out": str(path), "rows": int(len(out)), "start": str(out["date"].min()), "end": str(out["date"].max())}
+    return {"status": "ok", "out": str(path), "rows": len(out), "start": str(out["date"].min()), "end": str(out["date"].max())}
 
 
 def _ols_hac(y: pd.Series, x: pd.DataFrame, *, maxlags: int) -> sm.regression.linear_model.RegressionResultsWrapper | None:
@@ -780,7 +780,7 @@ def _window_overlaps_pandemic(index: pd.Index, horizon: int) -> pd.Series:
     blocked = _pandemic_mask(index)
     out = blocked.copy()
     if horizon >= 0:
-        for step in range(0, horizon + 1):
+        for step in range(horizon + 1):
             out |= blocked.shift(-step, fill_value=False)
     else:
         for step in range(1, abs(horizon) + 2):
@@ -796,7 +796,11 @@ def _sample_mask(index: pd.Index, sample_name: str, horizon: int) -> pd.Series:
     return ~_window_overlaps_pandemic(index, horizon)
 
 
-def estimate_disbursement_lps(flows: pd.DataFrame, calendar: pd.DataFrame, weekly_state: pd.DataFrame) -> pd.DataFrame:
+def estimate_disbursement_response_profiles(
+    flows: pd.DataFrame,
+    calendar: pd.DataFrame,
+    weekly_state: pd.DataFrame,
+) -> pd.DataFrame:
     panel = _prepare_regression_panel(flows, calendar, weekly_state)
     flow_controls = ["du_broad_outflows_bn", "interest_outflows_bn", "debt_issues_gross_bn", "debt_redemptions_gross_bn"]
     cal_controls = [c for c in calendar.columns if c != "date"]
@@ -818,9 +822,9 @@ def estimate_disbursement_lps(flows: pd.DataFrame, calendar: pd.DataFrame, weekl
                 for spec_type, extra_controls, spec_note in [
                     ("LP_naive", [], "gross flows separate; HAC NW(h+4); 4 lags of all flow buckets; exact H8 Thu-Wed windows; naive no future-flow controls"),
                     (
-                        "LP_lead_controlled",
+                        "LP_future_flow_conditioned",
                         lead_controls,
-                        "gross flows separate; HAC NW(h+4); 4 lags plus scheduled future flow controls t+1..t+h; exact H8 Thu-Wed windows",
+                        "gross flows separate; HAC NW(h+4); 4 lags plus realized future-flow controls t+1..t+h; exact H8 Thu-Wed windows",
                     ),
                 ]:
                     regressors = panel.loc[mask, ["du_core_outflows_bn", "tax_receipts_bn", *controls, *extra_controls]].copy()
@@ -844,12 +848,10 @@ def estimate_disbursement_lps(flows: pd.DataFrame, calendar: pd.DataFrame, weekl
                                 "se": float(fit.bse[treatment]),
                                 "p": float(fit.pvalues[treatment]),
                                 "p_wild_bootstrap": _wild_pvalue(y_sample, regressors, treatment, beta, seed=seed)
-                                if h in RETENTION_HORIZONS and outcome == "deposits_dpsacb"
+                                if h in PROFILE_REPORT_HORIZONS and outcome == "deposits_dpsacb"
                                 else np.nan,
                                 "n": int(fit.nobs),
                                 "spec_flags": spec_note,
-                                "uniform_band_lower": np.nan,
-                                "uniform_band_upper": np.nan,
                                 "p_event_permutation": np.nan,
                             }
                         )
@@ -888,23 +890,17 @@ def estimate_disbursement_lps(flows: pd.DataFrame, calendar: pd.DataFrame, weekl
                             "se": float(np.sqrt(max(variance, 0.0))) if np.isfinite(variance) else np.nan,
                             "p": np.nan,
                             "p_wild_bootstrap": _wild_pvalue_sum(dy.loc[fdl_mask], x_fdl.loc[fdl_mask], cols_h, cumulative, seed=20260704 + len(rows) * 17)
-                            if h in RETENTION_HORIZONS and outcome == "deposits_dpsacb"
+                            if h in PROFILE_REPORT_HORIZONS and outcome == "deposits_dpsacb"
                             else np.nan,
                             "n": int(fit.nobs),
                             "spec_flags": "one-week delta outcome; current plus 13 lag distributed-lag cumulation; shifts built on full panel before sample drops",
-                            "uniform_band_lower": np.nan,
-                            "uniform_band_upper": np.nan,
                             "p_event_permutation": np.nan,
                         }
                     )
     est = pd.DataFrame(rows)
     if not est.empty:
-        dep = est.loc[est["outcome"].eq("deposits_dpsacb") & est["horizon"].isin(range(14))].copy()
-        for (sample, treatment, spec), group in dep.groupby(["sample", "treatment_id", "spec_type"]):
-            se_max = pd.to_numeric(group["se"], errors="coerce").max()
-            idx = group.index
-            est.loc[idx, "uniform_band_lower"] = est.loc[idx, "beta"] - 1.96 * se_max
-            est.loc[idx, "uniform_band_upper"] = est.loc[idx, "beta"] + 1.96 * se_max
+        est["pointwise_ci_lower"] = est["beta"] - 1.96 * est["se"]
+        est["pointwise_ci_upper"] = est["beta"] + 1.96 * est["se"]
     return est
 
 
@@ -1031,7 +1027,43 @@ def estimate_tax_deadline_lane(flows: pd.DataFrame, calendar: pd.DataFrame, week
     }
 
 
-def write_disbursement_readout(
+def _same_week_interval_summary(impact: pd.DataFrame) -> str:
+    total = len(impact)
+    if total == 0:
+        return "No headline same-week estimate rows were returned in this run; inspect the estimate table before interpreting impact precision."
+
+    bounds = impact[["pointwise_ci_lower", "pointwise_ci_upper"]].apply(pd.to_numeric, errors="coerce")
+    estimable = bounds.dropna()
+    if estimable.empty:
+        return f"None of the {total} headline same-week estimate rows has finite pointwise interval bounds in this run."
+
+    includes_zero = (estimable["pointwise_ci_lower"] <= 0) & (estimable["pointwise_ci_upper"] >= 0)
+    count = int(includes_zero.sum())
+    estimable_count = len(estimable)
+    if count == estimable_count:
+        message = (
+            f"All {estimable_count} finite conventional 95 percent pointwise intervals for headline "
+            "same-week estimates include zero."
+        )
+    elif count == 0:
+        message = (
+            f"None of the {estimable_count} finite conventional 95 percent pointwise intervals for headline "
+            "same-week estimates includes zero."
+        )
+    else:
+        message = (
+            f"{count} of the {estimable_count} finite conventional 95 percent pointwise intervals for headline "
+            "same-week estimates include zero."
+        )
+    missing = total - len(estimable)
+    if missing == 1:
+        message += " One additional headline estimate row lacks finite interval bounds."
+    elif missing:
+        message += f" An additional {missing} headline estimate rows lack finite interval bounds."
+    return message
+
+
+def write_response_profile_readout(
     *,
     estimates: pd.DataFrame,
     weekly: pd.DataFrame,
@@ -1043,30 +1075,39 @@ def write_disbursement_readout(
 ) -> None:
     path = Path(out_md)
     path.parent.mkdir(parents=True, exist_ok=True)
-    ret = estimates.loc[
+    profile = estimates.loc[
         estimates["outcome"].eq("deposits_dpsacb")
         & estimates["treatment_id"].isin(["du_core_outflows_bn", "tax_receipts_bn"])
         & estimates["sample"].isin(["full", "ex_pandemic"])
-        & estimates["horizon"].isin(RETENTION_HORIZONS)
-        & estimates["spec_type"].isin(["LP_lead_controlled", "FDL", "LP_naive"])
+        & estimates["horizon"].isin(PROFILE_REPORT_HORIZONS)
+        & estimates["spec_type"].isin(["LP_future_flow_conditioned", "FDL", "LP_naive"])
     ].copy()
-    if not ret.empty:
-        beta0 = ret.loc[ret["horizon"].eq(0), ["sample", "treatment_id", "spec_type", "beta"]].rename(columns={"beta": "beta0"})
-        ret = ret.merge(beta0, on=["sample", "treatment_id", "spec_type"], how="left")
-        ret["retention_ratio"] = ret["beta"] / ret["beta0"]
-        show = ret[["sample", "spec_type", "treatment_id", "horizon", "beta", "retention_ratio", "se", "p_wild_bootstrap", "n"]].round(4)
-    else:
-        show = pd.DataFrame()
+    show = profile[
+        [
+            "sample",
+            "spec_type",
+            "treatment_id",
+            "horizon",
+            "beta",
+            "se",
+            "pointwise_ci_lower",
+            "pointwise_ci_upper",
+            "p_wild_bootstrap",
+            "n",
+        ]
+    ].round(4)
     impact = estimates.loc[
         estimates["outcome"].eq("deposits_dpsacb")
         & estimates["treatment_id"].eq("du_core_outflows_bn")
         & estimates["horizon"].eq(0)
         & estimates["sample"].isin(["full", "ex_pandemic"])
-        & estimates["spec_type"].isin(["LP_lead_controlled", "FDL"]),
-        ["sample", "spec_type", "beta", "se", "n"],
+        & estimates["spec_type"].isin(["LP_future_flow_conditioned", "FDL"]),
+        ["sample", "spec_type", "beta", "se", "pointwise_ci_lower", "pointwise_ci_upper", "p_wild_bootstrap", "n"],
     ].round(4)
     placebo = estimates.loc[
-        estimates["spec_type"].eq("LP_lead_controlled") & estimates["horizon"].isin([-4, -3, -2]) & estimates["sample"].eq("full")
+        estimates["spec_type"].eq("LP_future_flow_conditioned")
+        & estimates["horizon"].isin([-4, -3, -2])
+        & estimates["sample"].eq("full")
     ]
     placebo_rate = f"{int((placebo['p'] < 0.05).sum())}/{len(placebo)}" if not placebo.empty else "0/0"
     unmapped = int((~crosswalk["mapped"] & crosswalk["above_threshold"]).sum()) if not crosswalk.empty else 0
@@ -1080,25 +1121,33 @@ def write_disbursement_readout(
         if np.isfinite(iv_beta) and np.isfinite(iv_se_uncorrected)
         else "not available"
     )
+    same_week_interval_summary = _same_week_interval_summary(impact)
     lines = [
-        "# DTS Disbursement-Side LP Readout",
+        "# DTS–H.8 Cumulative Deposit-Stock Response Profiles",
         "",
-        "Mechanical-impact benchmark: the expected beta0 for core outflows is approximately the commercial-bank landing share, not one by construction. H.8 excludes thrifts, credit unions, Direct Express prepaid balances, and foreign recipients; beta0 is a plumbing/perimeter check, while beta4/beta8/beta13 and retention ratios are the evidence on persistence.",
+        "**Admission status: descriptive only**",
         "",
-        "Corrected beta0 landing-share check:",
+        "The DTS core disbursement outflow bucket and the aggregate H.8 deposit outcome are not matched at the beneficiary-account level. The same-week coefficient is therefore a measured-perimeter impact response rather than a share of payments known to have landed. "
+        + same_week_interval_summary,
+        "",
+        "Later coefficients preserve the observed descriptive signal. If the mapping from DTS categories into the H.8 perimeter is stable and conditioning on realized future flows adequately handles anticipation, a positive later cumulative profile is consistent with a delayed measured-perimeter deposit response. The location and strength of that signal vary across the future-flow-conditioned LP, the finite distributed-lag model, and sample definitions, so it does not separately identify immediate incidence, a post-landing kernel, or a deposit half-time.",
+        "",
+        "The tax-receipt profile is a descriptive association with anticipated remittance timing. Its intermediate-horizon signal remains reportable, but it is not a causal tax-drain survival curve.",
+        "",
+        "## Same-week measured-perimeter impact response",
         "",
     ]
     lines.extend(_markdown_table(impact))
     lines.extend(
         [
             "",
-            "Lead-controlled LP is the headline persistence path. LP_naive is retained only as the recurring-schedule-contaminated comparison; FDL is the distributed-lag companion.",
+            "`LP_future_flow_conditioned` includes realized future-flow controls through each horizon; those controls are not an ex-ante schedule. `LP_naive` is the recurring-schedule-sensitive comparison, and `FDL` is the cumulative distributed-lag companion. These are distinct conditioning designs.",
             "",
             f"DTS coverage: weekly flow panel {weekly.index.min().date()} through {weekly.index.max().date()}, {len(weekly)} H.8 Thursday-to-Wednesday windows.",
             f"Seam-stitching verdict: {seam.get('verdict')} ({seam.get('last_dedicated_date')} dedicated through {seam.get('first_table_ii_date')} Table II start). Annual anchor continuity ok={seam.get('annual_anchor_continuity_ok')}; annual anchor level ok={seam.get('annual_anchor_level_ok')}; 2022-2024 component totals={seam_anchor}. {seam.get('note')}",
             f"Crosswalk rows: {len(crosswalk)}. Unmapped above threshold: {unmapped}. Median absolute Table II reconciliation residual: {residual:.4f} bn. The residual moved from 0.005bn to 0.124bn after the crosswalk remap because category bucket composition changed; it remains negligible relative to billion-dollar weekly flows.",
             "",
-            "## Retention Table",
+            "## Unnormalized cumulative H.8 response profile",
             "",
         ]
     )
@@ -1108,30 +1157,26 @@ def write_disbursement_readout(
             "",
             "## Mirrors And Lanes",
             "",
-            "Deposit, reserve, Wednesday TGA, ON RRP, MMF, and bank-credit sensitivity rows are in `dts_disbursement_lp_estimates.csv` where source series exist. WTREGEN is kept as week-average TGA sensitivity; WDTGAL is the Wednesday-level TGA mirror.",
+            "Deposit, reserve, Wednesday TGA, ON RRP, MMF, and bank-credit sensitivity rows are in `dts_h8_response_profile_estimates.csv` where source series exist. WTREGEN is kept as week-average TGA sensitivity; WDTGAL is the Wednesday-level TGA mirror.",
             f"SSA official fetch: {ssa_fetch.get('status', 'not_attempted')} at {ssa_fetch.get('url', '')}; detail={ssa_fetch.get('detail', '')}",
             f"SSA lane verdict: {ssa.get('verdict', ssa.get('status'))}; first-stage F={ssa.get('first_stage_f', np.nan):.3g}; reduced-form h4 beta={ssa.get('reduced_form_h4_beta', np.nan):.3g}, p={ssa.get('reduced_form_h4_p', np.nan):.3g}, permutation p={ssa.get('p_event_permutation', np.nan):.3g}; 2SLS h4 beta={ssa.get('iv_h4_beta', np.nan):.3g}, p={ssa.get('iv_h4_p', np.nan):.3g}, fitted-value se_uncorrected={ssa.get('iv_se_uncorrected', False)}, uncorrected CI={iv_ci}. {ssa.get('note', '')}",
             f"Tax-deadline lane verdict: {tax_lane.get('verdict', tax_lane.get('status'))}; h4 deadline beta={tax_lane.get('tax_due_h4_beta', np.nan):.3g}, p={tax_lane.get('tax_due_h4_p', np.nan):.3g}, permutation p={tax_lane.get('p_event_permutation', np.nan):.3g}. {tax_lane.get('note', '')}",
             f"Descriptive lead placebo rate: {placebo_rate} significant at 5 percent.",
             "Event-lane permutation inference is within-year event-label permutation with 999 seeded draws; tax remains descriptive event-time and SSA is disclosed as a fallback-dollar weak/strong lane according to the first-stage F.",
             "",
-            "## Verified Caveats",
+            "## Interpretation",
             "",
             "Tax lead placebos reflect genuine anticipation: payroll income is deposited before it is remitted, so the tax-drain path is descriptive-with-anticipation rather than clean causal timing.",
-            "Tax-drain persistence is robust through h0-h8 only; h13 dies ex-April and post-seam. Safe form: drains persist through ~2 months; credits decay by h13.",
-            "The core-outflow mid-horizon bump is spec-dependent: null in the LP wild bootstrap and significant only in the FDL path, so it is not retention evidence.",
+            "The tax-receipt profile carries an intermediate-horizon descriptive signal, while its week-13 endpoint is sample-dependent.",
+            "The core-disbursement mid-horizon response is specification-dependent: it is imprecise under the LP bootstrap and stronger in parts of the FDL path. That contrast is evidence about the observed association and the conditioning design, not a reason to suppress either profile.",
             "SSA lane label: strong first stage, underpowered outcome - uninformative on magnitude. The null must not be read as evidence that benefits do not reach deposits.",
             "Pandemic-block edge convention: for the first post-block week, the t-1 base can sit inside the excluded block for one row per horizon.",
             "",
-            "## Falsification Map",
+            "## Identification boundary",
             "",
-            "Landing-share/plumbing check: core-DU beta0 is mechanically plausible and well below one, consistent with partial commercial-bank landing.",
-            "Credit persistence: core credits decay by h13; any mid-horizon bump must be treated as spec-dependent rather than retention evidence.",
-            "Tax-drain path: tax receipts drain deposits through about two months, with anticipation contaminating causal timing and no safe h13 persistence claim.",
-            "Perimeter/measurement failure: no plausible beta0 for core-DU credits despite clean Wednesday-level TGA/reserve accounting.",
-            "Artifact flag: any headline that exists only on the net treatment and dies when gross credits and drains are separated.",
-            "",
-            "Corrected claim boundary: descriptive weekly-flow evidence supports a mechanical landing-share/plumbing check. Persistence requires the lead-controlled and FDL rows, not the naive LP path; safe persistence language is drains through ~2 months and credits decaying by h13. Quasi-experiments identify their specific margins where valid; this should be read alongside the QRA absorption-null evidence in `qra_event_lp_readout.md`.",
+            "Coefficients are billions of H.8 deposits per billion dollars of the named gross DTS flow bucket. The denominator is not a dollar observed entering the H.8 reporting perimeter. The profiles therefore do not identify transaction-time landing, immediate incidence, a post-landing kernel, retention, causal decay, a deposit half-time, or state-dependent absorption capacity.",
+            "No horizon coefficient is divided by the same-week estimate. Uncertainty columns are conventional pointwise intervals; the output contains no simultaneous-band claim.",
+            "Quasi-experimental lanes identify only their stated margins where their own gates pass. Read these descriptive profiles alongside the QRA announcement-window evidence in `qra_event_lp_readout.md`.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1147,7 +1192,7 @@ def _markdown_table(frame: pd.DataFrame) -> list[str]:
     return out
 
 
-def run_disbursement_lp_csv(
+def run_disbursement_response_profile_csv(
     *,
     transactions_csv: str | Path = "data/raw/fiscaldata/dts_deposits_withdrawals_operating_cash.csv",
     refunds_csv: str | Path = "data/raw/fiscaldata/dts_income_tax_refunds_issued.csv",
@@ -1157,8 +1202,8 @@ def run_disbursement_lp_csv(
     weekly_flows_csv: str | Path = "data/processed/dts_weekly_flow_decomposition.csv",
     calendar_csv: str | Path = "data/processed/fiscal_calendar_weekly.csv",
     crosswalk_csv: str | Path = "data/processed/dts_category_crosswalk.csv",
-    estimates_csv: str | Path = "data/processed/dts_disbursement_lp_estimates.csv",
-    readout_md: str | Path = "data/processed/dts_disbursement_lp_readout.md",
+    estimates_csv: str | Path = "data/processed/dts_h8_response_profile_estimates.csv",
+    readout_md: str | Path = "data/processed/dts_h8_response_profile_readout.md",
 ) -> dict[str, object]:
     flow_report = build_weekly_flow_decomposition(
         transactions_csv=transactions_csv,
@@ -1173,7 +1218,7 @@ def run_disbursement_lp_csv(
     calendar = pd.read_csv(calendar_csv, parse_dates=["date"])
     weekly_state = pd.read_csv(weekly_state_csv, parse_dates=["date"]).set_index("date")
     weekly_state = normalize_weekly_panel_units(weekly_state)
-    estimates = estimate_disbursement_lps(flows, calendar, weekly_state)
+    estimates = estimate_disbursement_response_profiles(flows, calendar, weekly_state)
     est_path = Path(estimates_csv)
     est_path.parent.mkdir(parents=True, exist_ok=True)
     estimates.to_csv(est_path, index=False)
@@ -1181,7 +1226,7 @@ def run_disbursement_lp_csv(
     seam = flow_report["seam"]
     ssa = estimate_ssa_proxy_lane(flows, calendar, weekly_state)
     tax_lane = estimate_tax_deadline_lane(flows, calendar, weekly_state)
-    write_disbursement_readout(
+    write_response_profile_readout(
         estimates=estimates,
         weekly=flows,
         crosswalk=crosswalk,
@@ -1197,7 +1242,7 @@ def run_disbursement_lp_csv(
         "crosswalk": str(crosswalk_csv),
         "estimates": str(est_path),
         "readout": str(readout_md),
-        "rows": int(len(estimates)),
+        "rows": len(estimates),
         "flow_rows": flow_report["rows"],
         "seam": seam,
         "ssa": ssa,

@@ -65,7 +65,7 @@ BUILTIN_FETCH_URLS = [
     # qrawatch registry gap: no current-quarter refunding event between 2021-08 and 2022-05.
     "https://home.treasury.gov/news/press-releases/jy0452",
     "https://home.treasury.gov/news/press-releases/jy0575",
-    # Post-registry rows from Work Order 1.
+    # Post-registry rows retained from Treasury releases.
     "https://home.treasury.gov/news/press-releases/sb0300",
     "https://home.treasury.gov/news/press-releases/sb0377",
     "https://home.treasury.gov/news/press-releases/sb0485",

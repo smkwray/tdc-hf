@@ -9,7 +9,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-
 CORE_OUTCOMES = {
     "deposits",
     "broad_deposits",
@@ -56,7 +55,7 @@ def _claim_status(row: pd.Series) -> tuple[str, str]:
             )
         if hac or boot:
             return ("mechanism_evidence", "Mechanism response with cleaner placebo behavior, not a primary pass-through estimate.")
-    return ("appendix_only", "Useful sensitivity or context outcome; do not foreground in the thesis claim.")
+    return ("appendix_only", "Useful sensitivity or context outcome; do not foreground in the primary claim.")
 
 
 def build_claim_status_table(
@@ -92,7 +91,7 @@ def build_claim_status_table(
 
     statuses = table.apply(_claim_status, axis=1, result_type="expand")
     table["claim_status"] = statuses[0]
-    table["thesis_language"] = statuses[1]
+    table["claim_language"] = statuses[1]
     cols = [
         "anchor_variant",
         "anchor_column",
@@ -113,7 +112,7 @@ def build_claim_status_table(
         "regime_min_beta",
         "regime_max_beta",
         "claim_status",
-        "thesis_language",
+        "claim_language",
     ]
     for col in cols:
         if col not in table.columns:
@@ -155,7 +154,7 @@ def _write_claim_status_md(table: pd.DataFrame, path: Path) -> None:
                 f"- h=`{int(row['horizon'])}` `{row['anchor_variant']}` / `{row['outcome']}`: "
                 f"`{float(row['same_unit_beta']):.3g}` "
                 f"[`{float(row['same_unit_lower95']):.3g}`, `{float(row['same_unit_upper95']):.3g}`]; "
-                f"placebo clean `{row['placebo_clean']}`. {row['thesis_language']}"
+                f"placebo clean `{row['placebo_clean']}`. {row['claim_language']}"
             )
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pandas as pd
 
-from tdchf.figures import export_thesis_figures
+from tdchf.figures import export_publication_figures
 
 
-def test_export_thesis_figures(tmp_path) -> None:
+def test_export_publication_figures(tmp_path) -> None:
     dates = pd.date_range("2024-01-31", periods=4, freq="ME")
     proxy = tmp_path / "proxy.csv"
     components = tmp_path / "components.csv"
@@ -22,7 +22,7 @@ def test_export_thesis_figures(tmp_path) -> None:
         }
     ).to_csv(lp, index=False)
 
-    report = export_thesis_figures(proxy_csv=proxy, components_csv=components, lp_csv=lp, out_dir=tmp_path / "figures")
+    report = export_publication_figures(proxy_csv=proxy, components_csv=components, lp_csv=lp, out_dir=tmp_path / "figures")
 
     assert report["status"] == "ok"
     assert report["count"] >= 3

@@ -70,3 +70,28 @@ steps:
     assert not (tmp_path / "panel_a.csv").exists()
     assert (tmp_path / "panel_b.csv").exists()
     assert [step["status"] for step in report["steps"] if step["id"] == "panel_a"] == ["skipped_by_filter"]
+
+
+def test_run_analysis_spec_exports_analysis_status_report(tmp_path) -> None:
+    section = tmp_path / "section.md"
+    section.write_text("# Publication tables\n\nCurrent results.\n", encoding="utf-8")
+    spec = tmp_path / "spec.yml"
+    spec.write_text(
+        """
+root: .
+steps:
+  - id: analysis_status_report
+    action: export-analysis-report
+    publication_md: section.md
+    out: analysis_status.md
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = run_analysis_spec(spec)
+
+    output = (tmp_path / "analysis_status.md").read_text(encoding="utf-8")
+    assert report["status"] == "ok"
+    assert "TDC-HF Analysis Status Report" in output
+    assert "Current results." in output

@@ -34,6 +34,7 @@ The package can generate:
 - monthly proxy validation and method-comparison tables;
 - weekly Treasury-plumbing state panels;
 - a deterministic daily/weekly/quarterly Treasury-flow bridge;
+- unnormalized DTS–H.8 cumulative deposit-stock response profiles;
 - TGA, fiscal-flow, category-flow, and auction shock measures;
 - LP, LP-IV, bootstrap, placebo, regime, and factor-control diagnostics;
 - closeout tables comparing IV, non-IV, and reduced-form designs.
@@ -44,16 +45,14 @@ package, analysis specs, tests, and documentation needed to reproduce them.
 ## Setup
 
 ```bash
-set -a
-source .env
-set +a
+uv venv
 uv pip install -e '.[dev]'
 ```
 
 Run tests:
 
 ```bash
-"$UV_PROJECT_ENVIRONMENT/bin/python" -B -m pytest
+uv run --no-sync python -B -m pytest
 ```
 
 ## Common Commands
@@ -61,14 +60,14 @@ Run tests:
 Run the full Denton/FRED/DTS analysis spec:
 
 ```bash
-"$UV_PROJECT_ENVIRONMENT/bin/python" -B -m tdchf run-analysis-spec \
+uv run --no-sync python -B -m tdchf run-analysis-spec \
   config/analysis_fred_denton_shock.yml
 ```
 
 Run selected closeout artifacts:
 
 ```bash
-"$UV_PROJECT_ENVIRONMENT/bin/python" -B -m tdchf run-analysis-spec \
+uv run --no-sync python -B -m tdchf run-analysis-spec \
   config/analysis_fred_denton_shock.yml \
   --only closeout_anchor_contract_audit,closeout_short_run_core_lp_iv,closeout_noniv_tdc_lp,closeout_tga_reduced_form,closeout_placebo_summary,closeout_method_envelope,closeout_core_iv_vs_noniv_profiles
 ```
@@ -76,7 +75,7 @@ Run selected closeout artifacts:
 Run a minimal demo:
 
 ```bash
-"$UV_PROJECT_ENVIRONMENT/bin/tdchf" demo --out output/demo
+uv run --no-sync tdchf demo --out output/demo
 ```
 
 ## Deterministic Quarterly/High-Frequency Bridge
@@ -84,7 +83,7 @@ Run a minimal demo:
 Build the sparse bridge:
 
 ```bash
-uv run python -B -m tdchf build-quarterly-hf-bridge \
+uv run --no-sync python -B -m tdchf build-quarterly-hf-bridge \
   --out output/tables/quarterly_hf_bridge.csv
 ```
 
@@ -123,6 +122,37 @@ must designate the Tier-2 series as the current corrected headline and retain
 the base series as a comparison. This current comparison contract is separate
 from the legacy five-component Denton contract in
 `config/upstream_sources.yml`.
+
+## Directly Timed DTS–H.8 Response Profiles
+
+Build the descriptive response-profile artifacts:
+
+```bash
+uv run --no-sync python -B -m tdchf run-disbursement-response-profile
+```
+
+`run-disbursement-response-profile` estimates conditional associations between
+gross Daily Treasury Statement flow buckets and cumulative changes in the H.8
+“Deposits, All Commercial Banks” stock from the preceding Wednesday through
+each horizon. Coefficients are reported in billions of H.8 deposits per billion
+dollars of the named gross DTS flow.
+
+The public output preserves the descriptive signal and its pointwise
+uncertainty. If the DTS-to-H.8 perimeter mapping is stable and conditioning on
+realized future flows adequately handles anticipation, positive later
+coefficients are consistent with a delayed measured-perimeter deposit response.
+The future-flow-conditioned LP and the finite distributed-lag model remain
+distinct specifications, so their contrasts are reported rather than averaged
+away.
+
+The DTS treatment is not matched to beneficiary deposit accounts or to the H.8
+reporting perimeter. The same-week coefficient is therefore a measured-
+perimeter impact response, not a landing share. Later coefficients do not
+separately identify immediate incidence, a post-landing kernel, retention,
+causal decay, or a deposit half-time. The output contains no horizon-to-impact
+normalization or state-capacity estimate. State, placebo, and stability
+failures are retained only in the diagnostic `state_response_gate_status.csv`
+admission receipt; they are not a normal command-line workflow.
 
 ## Main Specs
 

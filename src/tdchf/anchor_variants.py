@@ -30,7 +30,7 @@ DEFAULT_ANCHOR_VARIANTS = [
         anchor_column="tdc_tier1_fed_corrected_bank_only_ru_flow",
         indicator="ru_component_sum",
         role="current_ru_reference",
-        note="Current Tier 1 reserve-user-side bank-only quarterly estimate.",
+        note="Current Tier 1 bank-only quarterly estimate on the settlement-system complement.",
     ),
     AnchorVariantSpec(
         key="du_gr_narrow",

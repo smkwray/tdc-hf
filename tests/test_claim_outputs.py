@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from tdchf.thesis_outputs import build_claim_status_table, export_anchor_variant_forest_plot, export_short_run_profile_plot
+from tdchf.claim_outputs import (
+    build_claim_status_table,
+    export_anchor_variant_forest_plot,
+    export_short_run_profile_plot,
+)
 
 
 def test_build_claim_status_table_labels_core_and_mechanism() -> None:
@@ -39,6 +43,7 @@ def test_build_claim_status_table_labels_core_and_mechanism() -> None:
 
     assert out.loc[out["outcome"].eq("bank_credit"), "claim_status"].iloc[0] == "core_evidence"
     assert out.loc[out["outcome"].eq("onrrp"), "claim_status"].iloc[0] == "mechanism_evidence_placebo_contaminated"
+    assert "claim_language" in out.columns
 
 
 def test_build_claim_status_table_labels_ci_as_regime_sensitive() -> None:

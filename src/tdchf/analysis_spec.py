@@ -6,11 +6,20 @@ from typing import Any
 
 import yaml
 
-from .auction_shocks import build_auction_size_shock, build_shock_bundle_csv, build_tga_rebuild_shock_csv
 from .accounting import export_accounting_decomposition
 from .anchor_variants import run_anchor_variant_robustness_csv
+from .auction_shocks import (
+    build_auction_size_shock,
+    build_shock_bundle_csv,
+    build_tga_rebuild_shock_csv,
+)
 from .bootstrap import bootstrap_lp_iv_csv
 from .calendar_controls import add_calendar_controls_csv
+from .claim_outputs import (
+    export_anchor_variant_forest_plot,
+    export_claim_status_table,
+    export_short_run_profile_plot,
+)
 from .closeout import (
     export_anchor_contract_audit,
     export_core_iv_vs_noniv_profiles,
@@ -21,13 +30,22 @@ from .closeout import (
     export_tga_reduced_form_closeout,
 )
 from .envelope import build_method_envelope
-from .figures import export_thesis_figures
+from .figures import export_publication_figures
 from .first_stage import run_first_stage_csv
-from .fiscaldata import build_dts_fiscal_indicators_csv, build_dts_transaction_indicators_csv, download_default_dts_sources, write_fiscaldata_csv
+from .fiscaldata import (
+    build_dts_fiscal_indicators_csv,
+    build_dts_transaction_indicators_csv,
+    download_default_dts_sources,
+    write_fiscaldata_csv,
+)
 from .fred import write_fred_series_csv
 from .iv_robustness import run_iv_robustness_csv
 from .live_indicators import FRED_HF_SERIES, build_fred_monthly_indicators_csv
-from .local_sources import build_fiscal_indicator_csv, build_tic_row_indicator_csv, merge_indicator_csvs
+from .local_sources import (
+    build_fiscal_indicator_csv,
+    build_tic_row_indicator_csv,
+    merge_indicator_csvs,
+)
 from .lp import run_local_projections_csv, run_lp_iv_csv, run_lp_iv_placebo_csv
 from .manifest import write_file_manifest, write_spec_manifest
 from .method_status import write_method_status_csv
@@ -40,14 +58,13 @@ from .reporting import (
     compare_iv_robustness_summaries,
     compare_lp_results,
     compare_monthly_proxies,
-    export_thesis_status_report,
+    export_analysis_status_report,
     export_publication_tables,
     summarize_estimates_bundle,
     summarize_panel_csv,
     summarize_proxy_run_cli,
 )
 from .shocks import build_named_residual_shock_csv, build_residual_shock_csv
-from .thesis_outputs import export_anchor_variant_forest_plot, export_claim_status_table, export_short_run_profile_plot
 from .weekly import build_weekly_channel_panel_csv, build_weekly_state_csv
 
 
@@ -261,7 +278,7 @@ def run_analysis_spec(
                 column=str(step.get("column", "tdc_monthly")),
             )
         elif action == "export-figures":
-            report = export_thesis_figures(
+            report = export_publication_figures(
                 proxy_csv=_resolve_path(step.get("proxy"), root=root) or "",
                 components_csv=_resolve_path(step.get("components"), root=root),
                 envelope_csv=_resolve_path(step.get("envelope"), root=root),
@@ -514,8 +531,8 @@ def run_analysis_spec(
                 horizons=_as_int_list(step.get("horizons")) or None,
                 out_dir=out_dir or out or "",
             )
-        elif action == "export-thesis-report":
-            report = export_thesis_status_report(
+        elif action == "export-analysis-report":
+            report = export_analysis_status_report(
                 out_md=out or "",
                 publication_md=_resolve_path(step.get("publication_md"), root=root),
                 iv_robustness_md=_resolve_path(step.get("iv_robustness_md"), root=root),

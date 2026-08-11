@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from .indicators import aggregate_levels_to_monthly, level_change_to_monthly_flow, read_wide_time_series_csv
+from .indicators import (
+    aggregate_levels_to_monthly,
+    level_change_to_monthly_flow,
+    read_wide_time_series_csv,
+)
 
 FRED_OUTCOME_SERIES = [
     "DPSACBM027SBOG",
@@ -64,7 +68,7 @@ def build_monthly_outcomes_from_fred_frame(df: pd.DataFrame) -> tuple[pd.DataFra
                 "column": "broad_deposits",
                 "source_series": broad_col,
                 "transform": "month_end_level_diff",
-                "definition": "broad all-commercial-bank deposits; retained for comparison, not the preferred thesis target",
+                "definition": "broad all-commercial-bank deposits; retained for comparison, not the preferred deposit outcome",
             }
         )
 
@@ -112,7 +116,7 @@ def build_monthly_outcomes_from_fred_frame(df: pd.DataFrame) -> tuple[pd.DataFra
                     "column": "domestic_non_large_time_deposits",
                     "source_series": f"{domestic_col}-{large_time_col}",
                     "transform": "derived_difference",
-                    "definition": "preferred thesis deposit target: domestic deposits less large time deposits",
+                    "definition": "preferred deposit outcome: domestic deposits less large time deposits",
                 }
             )
 

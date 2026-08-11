@@ -1659,8 +1659,8 @@ steps:
       - output/tables/long_tga_factor_publication/table_first_stage.csv
       - output/tables/long_tga_factor_comparison/lp_result_comparison.csv
       - output/tables/long_tga_calendar_comparison/lp_result_comparison.csv
-      - output/tables/thesis_claim_status/table_claim_status_h12.csv
-      - output/tables/thesis_claim_status/table_claim_status_short.csv
+      - output/tables/claim_status/table_claim_status_h12.csv
+      - output/tables/claim_status/table_claim_status_short.csv
       - output/figures/anchor_variant_forest/anchor_variant_h12_forest.png
       - output/figures/anchor_variant_short_run/anchor_variant_short_run_profile.png
       - output/tables/closeout/anchor_contract_audit.csv
@@ -1780,8 +1780,8 @@ steps:
       - onrrp
       - total_mmf
       - reserves
-    out: output/tables/thesis_claim_status/table_claim_status_h12.csv
-    out_md: output/tables/thesis_claim_status/table_claim_status_h12.md
+    out: output/tables/claim_status/table_claim_status_h12.csv
+    out_md: output/tables/claim_status/table_claim_status_h12.md
 
   - id: anchor_variant_forest_plot
     action: export-anchor-variant-forest
@@ -1805,8 +1805,8 @@ steps:
       - onrrp
       - total_mmf
       - reserves
-    out: output/tables/thesis_claim_status/table_claim_status_short.csv
-    out_md: output/tables/thesis_claim_status/table_claim_status_short.md
+    out: output/tables/claim_status/table_claim_status_short.csv
+    out_md: output/tables/claim_status/table_claim_status_short.md
 
   - id: anchor_variant_short_run_profile
     action: export-short-run-profile
@@ -1980,8 +1980,8 @@ steps:
     out: output/tables/publication/analysis_spec_manifest.csv
     out_md: output/tables/publication/analysis_spec_manifest.md
 
-  - id: thesis_status_report
-    action: export-thesis-report
+  - id: analysis_status_report
+    action: export-analysis-report
     publication_md: output/tables/publication/publication_tables.md
     iv_robustness_md: output/tables/iv_robustness/iv_robustness.md
     fiscal_flow_iv_md: output/tables/fiscal_flow_iv_robustness/iv_robustness.md
@@ -1990,12 +1990,12 @@ steps:
     lp_comparison_md: output/tables/lp_method_comparison/lp_result_comparison.md
     method_comparison_md: output/tables/proxy_method_comparison/proxy_comparison.md
     identification_md: docs/identification_risks.md
-    out: output/reports/thesis_status.md
+    out: output/reports/analysis_status.md
 
-  - id: thesis_figures
+  - id: publication_figures
     action: export-figures
     proxy: data/processed/fred_denton_proxy/tdc_monthly_proxy.csv
     components: data/processed/fred_denton_proxy/tdc_monthly_components.csv
     envelope: data/processed/fred_envelope/tdc_monthly_method_envelope.csv
     lp: data/processed/fred_denton_shock_lp_iv.csv
-    out_dir: output/figures/fred_denton
+    out_dir: output/figures/publication

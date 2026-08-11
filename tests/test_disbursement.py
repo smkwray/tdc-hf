@@ -3,15 +3,51 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from tdchf.cli import build_parser
 from tdchf.disbursement import (
+    _same_week_interval_summary,
     assign_h8_week,
     build_fiscal_calendar_weekly,
     build_stitched_tax_daily,
     build_weekly_flow_decomposition,
-    estimate_disbursement_lps,
+    estimate_disbursement_response_profiles,
     map_dts_category,
     seam_diagnostic,
 )
+
+
+def test_same_week_interval_summary_is_derived_from_estimate_rows() -> None:
+    impact = pd.DataFrame(
+        {
+            "pointwise_ci_lower": [-0.2, 0.1, np.nan],
+            "pointwise_ci_upper": [0.3, 0.4, np.nan],
+        }
+    )
+
+    summary = _same_week_interval_summary(impact)
+
+    assert "1 of the 2" in summary
+    assert "One additional headline estimate row lacks finite interval bounds" in summary
+
+
+def test_same_week_interval_summary_fails_visibly_without_rows() -> None:
+    impact = pd.DataFrame(columns=["pointwise_ci_lower", "pointwise_ci_upper"])
+
+    assert _same_week_interval_summary(impact).startswith("No headline same-week estimate rows")
+
+
+def test_public_cli_exposes_only_response_profile_command() -> None:
+    parser = build_parser()
+    subparsers = next(action for action in parser._actions if action.dest == "command")
+
+    disbursement_commands = {
+        command for command in subparsers.choices if command.startswith("run-disbursement")
+    }
+    assert disbursement_commands == {"run-disbursement-response-profile"}
+
+    args = parser.parse_args(["run-disbursement-response-profile"])
+    assert args.out == "data/processed/dts_h8_response_profile_estimates.csv"
+    assert args.readout == "data/processed/dts_h8_response_profile_readout.md"
 
 
 def test_assign_h8_week_uses_thursday_to_wednesday_window() -> None:
@@ -173,7 +209,7 @@ def test_calendar_places_known_shifted_tax_deadline_in_h8_week(tmp_path) -> None
     assert cal.loc[pd.Timestamp("2020-07-08"), "tax_due_week"] == 0
 
 
-def test_disbursement_lp_recovers_planted_beta() -> None:
+def test_disbursement_response_profile_recovers_planted_beta() -> None:
     n = 80
     dates = pd.date_range("2022-01-05", periods=n, freq="W-WED")
     rng = np.random.default_rng(123)
@@ -195,16 +231,19 @@ def test_disbursement_lp_recovers_planted_beta() -> None:
     weekly = pd.DataFrame({"broad_deposits_nsa": deposits}, index=dates)
     calendar = pd.DataFrame({"date": dates, "tax_due_week": 0, "coupon_week": 0, "ssa_cycle_payment_count": 0})
 
-    estimates = estimate_disbursement_lps(flows, calendar, weekly)
+    estimates = estimate_disbursement_response_profiles(flows, calendar, weekly)
     row = estimates.loc[
         estimates["outcome"].eq("deposits_dpsacb")
-        & estimates["spec_type"].eq("LP_lead_controlled")
+        & estimates["spec_type"].eq("LP_future_flow_conditioned")
         & estimates["sample"].eq("full")
         & estimates["treatment_id"].eq("du_core_outflows_bn")
         & estimates["horizon"].eq(0)
     ].iloc[0]
 
     assert round(float(row["beta"]), 1) == 0.7
+    assert not any(column.endswith("_ratio") for column in estimates.columns)
+    assert not any(column.startswith("uniform_") for column in estimates.columns)
+    assert round(float(row["pointwise_ci_lower"]), 8) == round(float(row["beta"] - 1.96 * row["se"]), 8)
 
 
 def test_ex_pandemic_sample_does_not_pair_outcomes_across_hole() -> None:
@@ -225,17 +264,17 @@ def test_ex_pandemic_sample_does_not_pair_outcomes_across_hole() -> None:
     weekly = pd.DataFrame({"broad_deposits_nsa": deposits}, index=dates)
     calendar = pd.DataFrame({"date": dates, "tax_due_week": 0, "coupon_week": 0, "ssa_cycle_payment_count": 0})
 
-    estimates = estimate_disbursement_lps(flows, calendar, weekly)
+    estimates = estimate_disbursement_response_profiles(flows, calendar, weekly)
     ex_row = estimates.loc[
         estimates["outcome"].eq("deposits_dpsacb")
-        & estimates["spec_type"].eq("LP_lead_controlled")
+        & estimates["spec_type"].eq("LP_future_flow_conditioned")
         & estimates["sample"].eq("ex_pandemic")
         & estimates["horizon"].eq(8)
         & estimates["treatment_id"].eq("du_core_outflows_bn")
     ].iloc[0]
     full_n = estimates.loc[
         estimates["outcome"].eq("deposits_dpsacb")
-        & estimates["spec_type"].eq("LP_lead_controlled")
+        & estimates["spec_type"].eq("LP_future_flow_conditioned")
         & estimates["sample"].eq("full")
         & estimates["horizon"].eq(8)
         & estimates["treatment_id"].eq("du_core_outflows_bn"),

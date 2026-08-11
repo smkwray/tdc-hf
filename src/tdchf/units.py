@@ -4,7 +4,6 @@ from collections.abc import Iterable
 
 import pandas as pd
 
-
 TDC_TREATMENT_COLUMNS = {"tdc_monthly"}
 MONETARY_FLOW_OUTCOMES = {
     "bank_credit",
@@ -41,7 +40,7 @@ MILLION_DOLLAR_FLOW_OUTCOMES = {
 def same_unit_multiplier(*, treatment: str, outcome: str) -> float:
     """Convert LP-IV coefficients to same-dollar pass-through when units differ.
 
-    The thesis TDC proxy is anchored in millions of dollars, while the FRED
+    The downstream TDC proxy is anchored in millions of dollars, while the FRED
     H.8 banking and money-fund outcomes used here are in billions of dollars.
     A raw coefficient for these pairs is therefore billions per million;
     multiply by 1,000 to read it as dollars of outcome per dollar of TDC.

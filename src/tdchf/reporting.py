@@ -583,7 +583,7 @@ def compare_lp_results(
     }
 
 
-def export_thesis_status_report(
+def export_analysis_status_report(
     *,
     out_md: str | Path,
     publication_md: str | Path | None = None,
@@ -606,7 +606,7 @@ def export_thesis_status_report(
         ("Identification Risks", identification_md),
     ]
     lines = [
-        "# TDC-HF Thesis Status Report",
+        "# TDC-HF Analysis Status Report",
         "",
         "This report is generated from the current Denton analysis artifacts.",
         "",

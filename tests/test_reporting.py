@@ -1,17 +1,28 @@
 from __future__ import annotations
 
-from tdchf.pipeline import run_monthly_proxy_pipeline
 import pandas as pd
 
+from tdchf.cli import build_parser
+from tdchf.pipeline import run_monthly_proxy_pipeline
 from tdchf.reporting import (
     compare_iv_robustness_summaries,
     compare_lp_results,
     compare_monthly_proxies,
+    export_analysis_status_report,
     export_publication_tables,
-    export_thesis_status_report,
     summarize_estimates_bundle,
     summarize_proxy_run,
 )
+
+
+def test_public_cli_exposes_only_neutral_analysis_report_command() -> None:
+    parser = build_parser()
+    subparsers = next(action for action in parser._actions if action.dest == "command")
+    report_commands = {
+        command for command in subparsers.choices if command.startswith("export-") and command.endswith("-report")
+    }
+
+    assert report_commands == {"export-analysis-report"}
 
 
 def test_summarize_proxy_run(tmp_path) -> None:
@@ -190,12 +201,12 @@ def test_compare_lp_results(tmp_path) -> None:
     assert round(out.loc[0, "delta_beta"], 2) == 0.05
 
 
-def test_export_thesis_status_report(tmp_path) -> None:
+def test_export_analysis_status_report(tmp_path) -> None:
     section = tmp_path / "section.md"
     section.write_text("# Section\n\nBody\n", encoding="utf-8")
 
-    report = export_thesis_status_report(out_md=tmp_path / "report.md", publication_md=section)
+    report = export_analysis_status_report(out_md=tmp_path / "report.md", publication_md=section)
 
     assert report["status"] == "ok"
     assert report["sections"] == 1
-    assert "TDC-HF Thesis Status Report" in (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "TDC-HF Analysis Status Report" in (tmp_path / "report.md").read_text(encoding="utf-8")

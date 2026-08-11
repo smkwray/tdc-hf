@@ -41,7 +41,7 @@ def _save_lp_plot(lp: pd.DataFrame, *, outcome: str, path: Path) -> None:
     plt.close(fig)
 
 
-def export_thesis_figures(
+def export_publication_figures(
     *,
     proxy_csv: str | Path,
     out_dir: str | Path,
