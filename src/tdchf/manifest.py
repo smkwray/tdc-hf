@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
+import subprocess
+from datetime import datetime, timezone
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +86,50 @@ def write_file_manifest(
         "rows": int(len(manifest)),
         "missing": manifest.loc[~manifest["exists"], "path"].tolist(),
     }
+
+
+def write_run_receipt(
+    out_json: str | Path,
+    *,
+    inputs: list[str | Path],
+    outputs: list[str | Path],
+    steps: list[str] | None = None,
+    vintage: str | None = None,
+    root: str | Path = ".",
+) -> dict[str, object]:
+    """Bind a rebuild to its committed producer, environment, input and output hashes.
+
+    Every listed file must exist, the producer must have no tracked edits, and an
+    existing receipt is never replaced.
+    """
+    path = Path(out_json)
+    if path.exists():
+        raise FileExistsError(f"receipt already exists: {path}")
+    repository = Path(__file__).resolve().parents[2]
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
+    tracked = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=repository, text=True).strip()
+    if tracked:
+        raise ValueError("commit the producer before writing a run receipt")
+    files = {}
+    for role, values in (("inputs", inputs), ("outputs", outputs)):
+        frame = build_file_manifest(values, root=root)
+        missing = frame.loc[~frame["exists"], "path"].tolist()
+        if missing:
+            raise FileNotFoundError(f"run receipt {role} missing: {missing}")
+        files[role] = frame.drop(columns=["exists", "modified_at"]).to_dict(orient="records")
+    receipt = {
+        "schema_version": "run_receipt_v1",
+        "vintage": vintage,
+        "producer_commit": commit,
+        "producer_tracked_changes": False,
+        "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "environment": {"python": platform.python_version(), **{name: version(name) for name in ("numpy", "pandas", "statsmodels")}},
+        "steps": list(steps or []),
+        **files,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    return {"status": "ok", "out": str(path), "sha256": _sha256(path), "inputs": len(files["inputs"]), "outputs": len(files["outputs"])}
 
 
 def _primary_outputs(step: dict[str, Any]) -> list[str]:

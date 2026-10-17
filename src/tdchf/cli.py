@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from .analysis_spec import run_analysis_spec
 from .auction_shocks import (
@@ -32,7 +33,7 @@ from .local_sources import (
     merge_indicator_csvs,
 )
 from .lp import run_local_projections_csv, run_lp_iv_csv, run_lp_iv_placebo_csv
-from .manifest import write_file_manifest, write_spec_manifest
+from .manifest import write_file_manifest, write_run_receipt, write_spec_manifest
 from .method_status import write_method_status_csv
 from .model_panel import assemble_model_panel_csv
 from .outcomes import FRED_OUTCOME_SERIES, build_monthly_outcomes_csv
@@ -42,6 +43,7 @@ from .qra_borrowing import build_qra_borrowing_surprise_csv
 from .qra_event_lp import run_qra_event_lp_csv
 from .quarterly_bridge import build_quarterly_hf_bridge_csv
 from .readiness import readiness_payload
+from . import reserve_offsets, weekly_reserve_history, weekly_trc_projection
 from .reporting import (
     compare_iv_robustness_summaries,
     compare_lp_results,
@@ -100,9 +102,11 @@ def build_parser() -> argparse.ArgumentParser:
     fred = subparsers.add_parser("download-fred", help="Download FRED graph CSV series into one wide CSV")
     fred.add_argument("series", nargs="+", help="FRED series ids")
     fred.add_argument("--out", required=True, help="Output CSV path")
+    fred.add_argument("--end-date", default=None, help="Drop observations after this vintage endpoint")
 
     hf_fred = subparsers.add_parser("download-hf-fred", help="Download default high-frequency FRED source series")
     hf_fred.add_argument("--out", default="data/raw/fred_hf_sources.csv", help="Output CSV path")
+    hf_fred.add_argument("--end-date", default=None, help="Drop observations after this vintage endpoint")
 
     outcome_fred = subparsers.add_parser("download-outcome-fred", help="Download default FRED outcome/control series")
     outcome_fred.add_argument("--out", default="data/raw/fred_outcome_sources.csv", help="Output CSV path")
@@ -148,6 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
     dts = subparsers.add_parser("download-dts-fiscaldata", help="Download default DTS FiscalData sources used by the proxy")
     dts.add_argument("--out-dir", default="data/raw/fiscaldata", help="Output raw source directory")
     dts.add_argument("--start-date", default="2005-01-01", help="First record_date to download")
+    dts.add_argument("--end-date", default=None, help="Last record_date to download (vintage endpoint)")
     dts.add_argument("--page-size", type=int, default=10_000, help="FiscalData page size")
     dts.add_argument("--max-workers", type=int, default=12, help="Parallel FiscalData page workers, capped at 12")
 
@@ -366,6 +371,14 @@ def build_parser() -> argparse.ArgumentParser:
     manifest.add_argument("--out", required=True, help="Output manifest CSV")
     manifest.add_argument("--out-json", default=None, help="Optional output manifest JSON")
 
+    run_receipt = subparsers.add_parser("write-run-receipt", help="Bind a rebuild to its commit, inputs and outputs")
+    run_receipt.add_argument("--out", required=True, help="Output receipt JSON (never replaced)")
+    run_receipt.add_argument("--input", action="append", default=[], required=True, help="Consumed file; repeat")
+    run_receipt.add_argument("--output", action="append", default=[], required=True, help="Produced file; repeat")
+    run_receipt.add_argument("--step", action="append", default=[], help="Executed command line; repeat in order")
+    run_receipt.add_argument("--vintage", default=None, help="Declared data vintage")
+    run_receipt.add_argument("--root", default=".", help="Root used for relative path display")
+
     spec_manifest = subparsers.add_parser("write-spec-manifest", help="Write a reproducibility manifest for a YAML analysis spec")
     spec_manifest.add_argument("spec", help="Analysis spec YAML")
     spec_manifest.add_argument("--out", required=True, help="Output manifest CSV")
@@ -457,6 +470,49 @@ def build_parser() -> argparse.ArgumentParser:
         default="output/tables/quarterly_hf_bridge.csv",
     )
 
+    offsets = subparsers.add_parser(
+        "run-weekly-reserve-offsets",
+        help="Weekly cash-leg and H.4.1 reserve-factor offset associations and descriptive event paths",
+    )
+    offsets.add_argument("--ledger", default="../tdcest/data/processed/reserve_factor_ledger_weekly_v1.csv")
+    offsets.add_argument("--ledger-receipt", default="../tdcest/data/processed/reserve_factor_ledger_v1_receipt.json")
+    offsets.add_argument("--rrp-others-level", default="../tdcest/data/raw/fiscus/h41_ledger/rrp_others.csv")
+    offsets.add_argument("--tga-level", default="../tdcest/data/raw/fiscus/h41_ledger/treasury_general_account.csv")
+    offsets.add_argument("--debt-limit-episodes", default="config/debt_limit_episodes.yml")
+    offsets.add_argument("--out-dir", default="output/tables/weekly_reserve_offsets_v1")
+    offsets.add_argument("--ledger-sha256", default=reserve_offsets.LEDGER_SHA256)
+    offsets.add_argument("--ledger-receipt-sha256", default=reserve_offsets.LEDGER_RECEIPT_SHA256)
+    offsets.add_argument("--bootstrap-reps", type=int, default=reserve_offsets.BOOTSTRAP_REPS)
+    offsets.add_argument("--calibration-sims", type=int, default=reserve_offsets.CALIBRATION_SIMS)
+    offsets.add_argument("--calibration-reps", type=int, default=reserve_offsets.CALIBRATION_REPS)
+    offsets.add_argument("--placebo-draws", type=int, default=reserve_offsets.PLACEBO_DRAWS)
+    offsets.add_argument("--seed", type=int, default=reserve_offsets.SEED)
+    offsets.add_argument("--config", default=None, help="Versioned design config: vintage, eras and pinned ledger hashes")
+    offsets.add_argument("--source-receipt", default=None, help="Upstream refresh receipt pinned by --config")
+
+    trc = subparsers.add_parser("run-weekly-trc-projection", help="Pinned weekly TRC descriptive accounting projections")
+    trc.add_argument("--source-root", type=Path, default=Path("../tdcest"))
+    trc.add_argument("--config", type=Path, default=Path(weekly_trc_projection.CONFIG))
+    trc.add_argument("--out-dir", type=Path, default=Path("output/tables/weekly_trc_projection_v1"))
+
+    history = subparsers.add_parser("run-weekly-reserve-history",
+                                    help="Weekly reserve period coefficients with recomputed restricted-score bootstrap inference")
+    history.add_argument("--source-root", type=Path, default=Path("../tdcest/data/refresh_2026q2"))
+    history.add_argument("--config", type=Path, default=Path(weekly_reserve_history.CONFIG))
+    history.add_argument("--out-dir", type=Path, default=Path("output/refresh_2026q2/weekly_reserve_history_v1"))
+    history.add_argument("--workers", type=int, default=None, help="Worker processes; results do not depend on the count")
+
+    rolling = subparsers.add_parser("run-weekly-reserve-rolling", help="Rolling weekly reserve projection on core TRC (descriptive)")
+    rolling.add_argument("--source-root", type=Path, default=Path("../tdcest/data/refresh_2026q2"))
+    rolling.add_argument("--config", type=Path, default=Path(weekly_reserve_history.ROLLING_CONFIG))
+    rolling.add_argument("--out-dir", type=Path, default=Path("output/refresh_2026q2/weekly_reserve_rolling_v1"))
+
+    monthly = subparsers.add_parser("run-monthly-reserve-rolling",
+                                    help="Monthly and three-month reserve projections with the money-fund route term (descriptive)")
+    monthly.add_argument("--source-root", type=Path, default=Path("../tdcest/data/refresh_2026q2_monthly/trc_monthly_v1"))
+    monthly.add_argument("--config", type=Path, default=Path(weekly_reserve_history.MONTHLY_CONFIG))
+    monthly.add_argument("--out-dir", type=Path, default=Path("output/refresh_2026q2/monthly_reserve_rolling_v1"))
+
     return parser
 
 
@@ -512,12 +568,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "download-fred":
-        path = write_fred_series_csv(args.series, args.out)
+        path = write_fred_series_csv(args.series, args.out, end_date=args.end_date)
         print(json.dumps({"status": "ok", "out": str(path), "series": args.series}, indent=2))
         return 0
 
     if args.command == "download-hf-fred":
-        path = write_fred_series_csv(FRED_HF_SERIES, args.out)
+        path = write_fred_series_csv(FRED_HF_SERIES, args.out, end_date=args.end_date)
         print(json.dumps({"status": "ok", "out": str(path), "series": FRED_HF_SERIES}, indent=2))
         return 0
 
@@ -579,6 +635,7 @@ def main(argv: list[str] | None = None) -> int:
         report = download_default_dts_sources(
             out_dir=args.out_dir,
             start_date=args.start_date,
+            end_date=args.end_date,
             page_size=args.page_size,
             max_workers=args.max_workers,
         )
@@ -875,6 +932,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2))
         return 0
 
+    if args.command == "write-run-receipt":
+        report = write_run_receipt(
+            args.out, inputs=args.input, outputs=args.output, steps=args.step, vintage=args.vintage, root=args.root
+        )
+        print(json.dumps(report, indent=2))
+        return 0
+
     if args.command == "write-spec-manifest":
         report = write_spec_manifest(args.spec, out_csv=args.out, out_md=args.out_md)
         print(json.dumps(report, indent=2))
@@ -939,6 +1003,48 @@ def main(argv: list[str] | None = None) -> int:
             legacy_validation_json=args.legacy_validation,
             out_csv=args.out,
         )
+        print(json.dumps(report, indent=2))
+        return 0
+
+    if args.command == "run-weekly-reserve-offsets":
+        report = reserve_offsets.run_weekly_reserve_offsets(
+            ledger_csv=args.ledger,
+            ledger_receipt_json=args.ledger_receipt,
+            rrp_others_level_csv=args.rrp_others_level,
+            tga_level_csv=args.tga_level,
+            debt_limit_yml=args.debt_limit_episodes,
+            out_dir=args.out_dir,
+            ledger_sha256=args.ledger_sha256,
+            ledger_receipt_sha256=args.ledger_receipt_sha256,
+            bootstrap_reps=args.bootstrap_reps,
+            calibration_sims=args.calibration_sims,
+            calibration_reps=args.calibration_reps,
+            placebo_draws=args.placebo_draws,
+            seed=args.seed,
+            design_config=reserve_offsets.load_design_config(args.config) if args.config else None,
+            source_receipt_json=args.source_receipt,
+        )
+        print(json.dumps(report, indent=2))
+        return 0
+
+    if args.command == "run-weekly-reserve-history":
+        report = weekly_reserve_history.run(args.source_root, args.out_dir, args.config, workers=args.workers,
+            progress=lambda row: print(json.dumps({k: row[k] for k in ("period", "width", "cell", "family", "coverage",
+                                                                      "two_sided_pass", "one_sided_pass")}), flush=True))
+        print(json.dumps(report, indent=2))
+        return 0
+
+    if args.command == "run-monthly-reserve-rolling":
+        print(json.dumps(weekly_reserve_history.run_monthly(args.source_root, args.out_dir, args.config), indent=2))
+        return 0
+
+    if args.command == "run-weekly-reserve-rolling":
+        print(json.dumps(weekly_reserve_history.run_rolling(args.source_root, args.out_dir, args.config), indent=2))
+        return 0
+
+    if args.command == "run-weekly-trc-projection":
+        report = weekly_trc_projection.run(args.source_root, args.out_dir, args.config,
+            progress=lambda row: print(json.dumps(row), flush=True))
         print(json.dumps(report, indent=2))
         return 0
 

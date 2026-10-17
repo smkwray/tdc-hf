@@ -1,0 +1,222 @@
+{
+  "schema": "weekly_reserve_history_v1",
+  "vintage": "2026q2",
+  "authority": "Weekly reserve period coefficients on core TRC, using scalar null-imposed restricted-score dependent-wild-bootstrap inference with a separate declared calibration.",
+  "declaration_note": "Periods, widths, margin, cells and standard follow the consult and are frozen before this run. They are not historically results-blind: earlier weekly era estimates and the consult's probes were inspected.",
+  "source_main": "d892731d44bb4b4770ca0010327e21b3f6b5568c",
+  "inputs": {
+    "RECEIPT.json": "d55e611d08d0668fe1c736ce21bcbbbb8b4a5efa9a52d2c11c6a8579888252f2",
+    "data/processed/trc_weekly_components_v1.csv": "68dabee345c2383fabc5d8826e19587bfb9c7d56e905da1528d49ac154f3bb95",
+    "data/processed/trc_weekly_identity_v1.csv": "c26c358295309e46baed15c5734f2174ba4ae0769231cca0c1ddd8fdaede8535",
+    "data/processed/trc_weekly_route_daily_v1.csv": "e23f402a2f6f6b9f9e50e03ba038b4bcf22409144e7413c52aa194624963650a",
+    "data/processed/trc_weekly_v1_receipt.json": "eb97e3c72bb5b684e727935fefe91e2110e7317c88be150387f1cf59a9001976",
+    "data/processed/reserve_factor_ledger_weekly_v1.csv": "0409f778d0a2e20fbe3aa0c743b50830f6f5df51e00511d46c5a7a3ea867c894",
+    "data/processed/reserve_factor_ledger_v1_receipt.json": "1b3feaa5948ea23c62a3c209579e4932dac49d79856121843f005a64e286509c",
+    "data/raw/fiscus/h41_ledger/rrp_others.csv": "422d0007998fed78361c35558c57c0e527ce7f0bd541ea09d702e9366fd2c23f"
+  },
+  "eras": {
+    "pooled": [
+      "2005-10-12",
+      "2026-09-30"
+    ],
+    "scarce_reserves": [
+      "2005-10-12",
+      "2008-09-10"
+    ],
+    "transition_2008": [
+      "2008-09-17",
+      "2008-12-17"
+    ],
+    "floor_2008_2015": [
+      "2008-12-24",
+      "2015-12-16"
+    ],
+    "post_liftoff": [
+      "2015-12-23",
+      "2026-09-30"
+    ]
+  },
+  "modern": "post_liftoff",
+  "nested": {
+    "pre_strains": [
+      "2005-10-12",
+      "2007-08-08"
+    ]
+  },
+  "inferential_periods": [
+    "scarce_reserves",
+    "floor_2008_2015",
+    "post_liftoff",
+    "pre_strains"
+  ],
+  "descriptive_periods": [
+    "pooled",
+    "transition_2008"
+  ],
+  "period_basis": {
+    "scarce_reserves": "Ends 2008-09-10, the last Wednesday before the September 15, 2008 change after which the Desk could no longer drain the reserves created by liquidity provision (FRBNY, Domestic Open Market Operations During 2008).",
+    "transition_2008": "2008-09-17 through 2008-12-17; the December 16, 2008 target-range decision ends it. Shown, not interpreted.",
+    "floor_2008_2015": "First wholly subsequent Thursday-Wednesday week after December 16, 2008 through the week before the December 17, 2015 implementation change.",
+    "post_liftoff": "From the first wholly subsequent week after December 17, 2015 (liftoff with the ON RRP directive) to the weekly endpoint. Not a claim that reserve conditions were homogeneous.",
+    "pre_strains": "Nested sensitivity ending 2007-08-08, before the August 9, 2007 onset of money-market strains (FRBNY, Domestic Open Market Operations During 2007)."
+  },
+  "exposure": "trc_core",
+  "companions": [
+    "trc_par_sensitivity",
+    "c_h"
+  ],
+  "route": "zero (no route term)",
+  "controls": "calendar",
+  "estimand": "Treatment coordinate of the projection of the period's weekly H.4.1 reserve change on core TRC and the calendar controls; a weekly core-TRC association distinct from the quarterly preferred-TRC coefficient.",
+  "inference": {
+    "statistic": "T(b) = (beta_hat - b) / s(b); s(b)^2 is the Bartlett long-run variance (calendar distance) of the scores a_t * e_b,t / (1 - h_t), with e_b the residual of y - b x on the controls, h the control leverage and a = x_perp / x_perp'x_perp.",
+    "bootstrap": "y* = b x + Z gamma_b + v * e_b / (1 - h), v Gaussian moving-average multipliers on the full weekly calendar with Cov = max(1 - d/(L+1), 0). In every draw the restricted control fit of y* - b x and its HC3/Bartlett scale are recomputed and T*(b) formed the same way.",
+    "closed_form": "beta_hat* - b and the draw's restricted residual are linear in b. Every long-run variance is the squared norm of a Bartlett factor (calendar moving sums of L+1 weeks over sqrt(L+1)), so Q(b) = (R00 - b R01)^2 + (b R11)^2 from a 2x2 QR and cannot cancel; T(b) = (beta_hat - b)/sqrt(Q(b)), T*(b) = (c_u - b c_x)/sqrt(Q*(b)). A scale whose factored columns are collinear to working precision is unresolved and no p-value is reported. The implementation is tested against an explicit per-draw refit.",
+    "p_values": "two-sided (1 + #{|T*| >= |T|})/(B + 1); upper (1 + #{T* >= T})/(B + 1); lower (1 + #{T* <= T})/(B + 1)",
+    "alpha": 0.05,
+    "primary_width": 12,
+    "sensitivity_widths": [
+      26
+    ],
+    "draws": 9999,
+    "seed": 2026101701,
+    "confidence_sets": "Inversion to a declared resolution: candidate breakpoints are all real roots of the per-draw quartics (c_e/s - u c_x)^2 q_R(u) - u^2 q_D(u) in standard-error units u = (b - beta_hat)/s, plus a - b, a, a + b for near-real complex pairs a +/- bi (which may be perturbed real pairs); the direct test is evaluated at every candidate and every midpoint, and each acceptance change is located by bisection on the direct test to 1e-10 relative in standard-error units. Components narrower than 1e-8 standard errors in absolute terms (or than four units of floating-point spacing at their location, which binds only beyond about 1e7 standard errors), including isolated accepted points (probability zero, undecidable in floating point), are not reported; the component containing beta_hat is always reported. Disconnected and unbounded sets are kept; the set always contains beta_hat; a dense independent check stops the run on any disagreement between the set and the direct test.",
+    "equivalence_margin": 0.1,
+    "equivalence": "Two one-sided 5% tests: H0 beta <= -0.10 rejected when the upper-tail p at -0.10 is at most 0.05; H0 beta >= 0.10 rejected when the lower-tail p at 0.10 is at most 0.05; equivalence only if both reject and the one-sided tests pass calibration.",
+    "minimum_residual_df": 20
+  },
+  "calibration": {
+    "outer": 5000,
+    "inner": 999,
+    "seed": 2026101702,
+    "streams": "SeedSequence([seed, period_index, width, cell_index]).spawn(2): one stream for errors, one for multipliers",
+    "location_invariance": "T(b) depends on y only through y - b x, so coverage and one-sided rejection at the exact projection target do not depend on the coefficient level; every cell is evaluated at its exact target.",
+    "scale": "Constant scale equal to the SD of the period's unrestricted residuals; concentrated scale multiplies it by sqrt(0.2 + 4.8 x_perp^2 / mean(x_perp^2)); crisis scale multiplies it by 5 inside the period's declared episodes and 0.6 outside.",
+    "errors": "Unit-variance AR(1) e_t = rho e_{t-1} + sqrt(1 - rho^2) u_t on the full weekly calendar with 300 burn-in weeks; MA(1) e_t = (u_t - 0.8 u_{t-1}) / sqrt(1.64); u Gaussian or Student t(4)/sqrt(2).",
+    "cells": {
+      "baseline": {
+        "ar1": [
+          -0.8,
+          0.0,
+          0.3,
+          0.85
+        ],
+        "innovations": [
+          "gaussian",
+          "t4"
+        ],
+        "variance": [
+          "constant",
+          "concentrated"
+        ],
+        "mean": "none"
+      },
+      "misspecification": {
+        "means": [
+          "slope_drift",
+          "midpoint_step",
+          "nuisance_drift"
+        ],
+        "innovations": [
+          "gaussian",
+          "t4"
+        ],
+        "variance": [
+          "constant",
+          "concentrated"
+        ],
+        "ar1": "empirical"
+      },
+      "crisis": {
+        "ar1": [
+          -0.8,
+          0.0,
+          0.3,
+          0.85
+        ],
+        "innovations": [
+          "gaussian",
+          "t4"
+        ],
+        "variance": "crisis"
+      },
+      "differenced": {
+        "ma1": -0.8,
+        "innovations": [
+          "gaussian",
+          "t4"
+        ],
+        "variance": [
+          "constant",
+          "concentrated"
+        ]
+      }
+    },
+    "means": {
+      "slope_drift": "(u_t - 0.5) x_t, u_t the calendar position in [0, 1] within the period",
+      "midpoint_step": "0.5 * 1[t >= calendar midpoint] * x_t",
+      "nuisance_drift": "0.25 * SD(y) * (2 u_t - 1) * m_t, m the period-standardized month-end-week indicator"
+    },
+    "empirical_ar1": "Calendar lag-1 autocorrelation of the period's unrestricted residuals",
+    "crisis_episodes": {
+      "scarce_reserves": [
+        [
+          "2007-08-09",
+          "2007-12-31"
+        ],
+        [
+          "2008-03-07",
+          "2008-04-30"
+        ]
+      ],
+      "floor_2008_2015": [
+        [
+          "2008-12-24",
+          "2009-06-30"
+        ],
+        [
+          "2011-07-01",
+          "2011-08-31"
+        ]
+      ],
+      "post_liftoff": [
+        [
+          "2019-09-16",
+          "2019-12-31"
+        ],
+        [
+          "2020-03-01",
+          "2020-06-30"
+        ],
+        [
+          "2023-03-01",
+          "2023-05-31"
+        ]
+      ],
+      "pre_strains": []
+    },
+    "crisis_note": "A period without a declared episode (pre_strains) has no crisis cells; its mandatory set is the other 32 cells.",
+    "standard": {
+      "two_sided": "Every mandatory cell's 95% Wilson lower bound on coverage of the exact target is at least 0.94.",
+      "one_sided": "Every mandatory cell's 95% Wilson upper bound on each one-sided rejection rate at the exact target is at most 0.06.",
+      "coverage_floor": 0.94,
+      "one_sided_ceiling": 0.06,
+      "wilson_z": 1.96,
+      "scope": "Status applies per period and width; a failure is reported and never tuned away (no change to widths, controls, dates or thresholds)."
+    },
+    "precision_subset": {
+      "simulations": 500,
+      "width": 12,
+      "method": "Exact inversion of every subset simulation: total length of bounded sets, share unbounded, share disconnected.",
+      "null_offsets": [
+        -0.5,
+        -0.25,
+        0.25,
+        0.5
+      ],
+      "null_offsets_note": "Rejection rate of the two-sided test of a null displaced by the offset from the exact target; equivalently, power against a true value displaced by minus the offset from a fixed null."
+    },
+    "audit_fields": "Each cell row records the AR(1) coefficient and residual SD actually used."
+  },
+  "fallback": "If a period fails, its coefficient is shown descriptively with no interval and the failure is stated."
+}

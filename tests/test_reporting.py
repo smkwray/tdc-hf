@@ -25,9 +25,9 @@ def test_public_cli_exposes_only_neutral_analysis_report_command() -> None:
     assert report_commands == {"export-analysis-report"}
 
 
-def test_summarize_proxy_run(tmp_path) -> None:
+def test_summarize_proxy_run(tmp_path, quarterly_anchors_path) -> None:
     run_dir = tmp_path / "run"
-    run_monthly_proxy_pipeline(out_dir=run_dir)
+    run_monthly_proxy_pipeline(out_dir=run_dir, quarterly_anchors_path=quarterly_anchors_path)
 
     summary = summarize_proxy_run(run_dir, out_json=tmp_path / "summary.json", out_md=tmp_path / "summary.md")
 

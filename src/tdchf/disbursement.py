@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
+from .federal_calendar import INDIVIDUAL_TAX_CATEGORIES, federal_holidays, nth_weekday, tax_deadline_dates
 from .fiscaldata import _clean_number
 from .qra_event_lp import normalize_weekly_panel_units
 
@@ -135,6 +136,7 @@ def map_dts_category(transaction_type: object, category: object) -> str:
                 "housing and urban",
                 "hud -",
                 "iap -",
+                "int'l assistance programs",
                 "independent agencies",
                 "international monetary fund",
                 "justice",
@@ -232,6 +234,7 @@ def map_dts_category(transaction_type: object, category: object) -> str:
                 "federal financing bank",
                 "federal retirement thrift savings",
                 "iap -",
+                "int'l assistance programs",
                 "international monetary fund",
                 "opm - federal employee",
                 "opm - civil serv",
@@ -543,21 +546,6 @@ def build_weekly_flow_decomposition(
     }
 
 
-def _observed(date_value: date, holidays: set[date]) -> date:
-    out = date_value
-    while out.weekday() >= 5 or out in holidays:
-        out += timedelta(days=1)
-    return out
-
-
-def _observed_fixed_holiday(date_value: date) -> date:
-    if date_value.weekday() == 5:
-        return date_value - timedelta(days=1)
-    if date_value.weekday() == 6:
-        return date_value + timedelta(days=1)
-    return date_value
-
-
 def _previous_business(date_value: date, holidays: set[date]) -> date:
     out = date_value
     while out.weekday() >= 5 or out in holidays:
@@ -565,56 +553,17 @@ def _previous_business(date_value: date, holidays: set[date]) -> date:
     return out
 
 
-def _nth_weekday(year: int, month: int, weekday: int, nth: int) -> date:
-    first = date(year, month, 1)
-    return first + timedelta(days=((weekday - first.weekday()) % 7) + 7 * (nth - 1))
-
-
-def _last_weekday(year: int, month: int, weekday: int) -> date:
-    last = (date(year + int(month == 12), 1 if month == 12 else month + 1, 1) - timedelta(days=1))
-    return last - timedelta(days=(last.weekday() - weekday) % 7)
-
-
-def federal_holidays(year: int) -> set[date]:
-    holidays = {
-        _observed_fixed_holiday(date(year, 1, 1)),
-        _nth_weekday(year, 1, 0, 3),
-        _nth_weekday(year, 2, 0, 3),
-        _last_weekday(year, 5, 0),
-        _observed_fixed_holiday(date(year, 6, 19)),
-        _observed_fixed_holiday(date(year, 7, 4)),
-        _nth_weekday(year, 9, 0, 1),
-        _nth_weekday(year, 10, 0, 2),
-        _observed_fixed_holiday(date(year, 11, 11)),
-        _nth_weekday(year, 11, 3, 4),
-        _observed_fixed_holiday(date(year, 12, 25)),
-    }
-    return holidays
-
-
-def statutory_tax_due_dates(year: int) -> set[date]:
-    holidays = set().union(*(federal_holidays(y) for y in [year - 1, year, year + 1]))
-    due = {
-        _observed(date(year, 1, 15), holidays),
-        _observed(date(year, 4, 15), holidays),
-        _observed(date(year, 6, 15), holidays),
-        _observed(date(year, 9, 15), holidays),
-    }
-    if year == 2020:
-        due.discard(_observed(date(2020, 4, 15), holidays))
-        due.discard(_observed(date(2020, 6, 15), holidays))
-        due.add(date(2020, 7, 15))
-    if year == 2021:
-        due.discard(_observed(date(2021, 4, 15), holidays))
-        due.add(date(2021, 5, 17))
-    return due
-
-
 def build_fiscal_calendar_weekly(*, start: str, end: str, out_csv: str | Path) -> dict[str, object]:
     weeks = pd.date_range(assign_h8_week(start), assign_h8_week(end), freq="W-WED")
     years = range(pd.Timestamp(start).year - 1, pd.Timestamp(end).year + 2)
     holidays = set().union(*(federal_holidays(y) for y in years))
-    tax_dates = set().union(*(statutory_tax_due_dates(y) for y in years))
+    # tax_due_week and tax_due_count use individual estimated installments and
+    # the individual annual payment only. Corporate deadlines (December 15
+    # installments every year and March 15 annual payments through 2016) are in
+    # the typed calendar but deliberately stay out of these columns: every
+    # calendar column is a regression control, so adding them would change the
+    # response-profile and state-diagnostic specifications. Known limitation.
+    tax_dates = tax_deadline_dates(years, INDIVIDUAL_TAX_CATEGORIES)
     rows: list[dict[str, object]] = []
     for week in weeks:
         days = [week.date() - timedelta(days=i) for i in range(6, -1, -1)]
@@ -637,11 +586,11 @@ def build_fiscal_calendar_weekly(*, start: str, end: str, out_csv: str | Path) -
             "quarter_end": int(any(day.month in {3, 6, 9, 12} and (pd.Timestamp(day) + pd.offsets.MonthEnd(0)).date() == day for day in days)),
         }
         for day in days:
-            if day == _nth_weekday(day.year, day.month, 2, 2):
+            if day == nth_weekday(day.year, day.month, 2, 2):
                 row["ssa_cycle2_count"] += 1
-            if day == _nth_weekday(day.year, day.month, 2, 3):
+            if day == nth_weekday(day.year, day.month, 2, 3):
                 row["ssa_cycle3_count"] += 1
-            if day == _nth_weekday(day.year, day.month, 2, 4):
+            if day == nth_weekday(day.year, day.month, 2, 4):
                 row["ssa_cycle4_count"] += 1
             if day == _previous_business(date(day.year, day.month, 1), holidays):
                 row["ssi_first_count"] += 1
@@ -650,6 +599,9 @@ def build_fiscal_calendar_weekly(*, start: str, end: str, out_csv: str | Path) -
             last_day = (pd.Timestamp(day) + pd.offsets.MonthEnd(0)).date()
             if day in {_previous_business(date(day.year, day.month, 15), holidays), _previous_business(last_day, holidays)}:
                 row["federal_salary_count"] += 1
+            # Known limitation: coupon and redemption weeks are 15th/month-end
+            # date proxies, not observed Treasury payment dates, and
+            # auction_settlement_week below always falls back to coupon_week.
             if day.day in {15, last_day.day}:
                 row["coupon_week"] = 1
                 row["redemption_week"] = 1

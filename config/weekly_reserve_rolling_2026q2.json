@@ -1,0 +1,35 @@
+{
+  "schema": "weekly_reserve_rolling_v1",
+  "vintage": "2026q2",
+  "authority": "Descriptive rolling two-year weekly reserve projections on core TRC, retaining time variation and declared inference limitations.",
+  "source_main": "d892731d44bb4b4770ca0010327e21b3f6b5568c",
+  "inputs": {
+    "RECEIPT.json": "d55e611d08d0668fe1c736ce21bcbbbb8b4a5efa9a52d2c11c6a8579888252f2",
+    "data/processed/trc_weekly_components_v1.csv": "68dabee345c2383fabc5d8826e19587bfb9c7d56e905da1528d49ac154f3bb95",
+    "data/processed/trc_weekly_identity_v1.csv": "c26c358295309e46baed15c5734f2174ba4ae0769231cca0c1ddd8fdaede8535",
+    "data/processed/trc_weekly_route_daily_v1.csv": "e23f402a2f6f6b9f9e50e03ba038b4bcf22409144e7413c52aa194624963650a",
+    "data/processed/trc_weekly_v1_receipt.json": "eb97e3c72bb5b684e727935fefe91e2110e7317c88be150387f1cf59a9001976",
+    "data/processed/reserve_factor_ledger_weekly_v1.csv": "0409f778d0a2e20fbe3aa0c743b50830f6f5df51e00511d46c5a7a3ea867c894",
+    "data/processed/reserve_factor_ledger_v1_receipt.json": "1b3feaa5948ea23c62a3c209579e4932dac49d79856121843f005a64e286509c",
+    "data/raw/fiscus/h41_ledger/rrp_others.csv": "422d0007998fed78361c35558c57c0e527ce7f0bd541ea09d702e9366fd2c23f"
+  },
+  "eras": {
+    "pooled": [
+      "2005-10-12",
+      "2026-09-30"
+    ],
+    "post_liftoff": [
+      "2015-12-23",
+      "2026-09-30"
+    ]
+  },
+  "modern": "post_liftoff",
+  "estimator": "OLS of the weekly H.4.1 reserve change on weekly core TRC (zero route) with the calendar controls, in every window of window_weeks consecutive calendar weeks ending at an observed week",
+  "window_weeks": 104,
+  "minimum_observed_weeks": 90,
+  "minimum_residual_df": 20,
+  "interval": "Conventional Newey-West: Bartlett weights 1 - lag/(L+1) over calendar distance with L = hac_width, scale n/(n-k); nominal pointwise 95% normal interval. Coverage not separately calibrated; the period calibration (weekly_reserve_history_v1) found 0.93-0.95 coverage for the restricted bootstrap after 2008.",
+  "hac_width": 12,
+  "dating": "window midpoint",
+  "scope": "Descriptive sample dependence of a weekly core-TRC association; overlapping windows are not independent; not the quarterly preferred-TRC coefficient; no landing, retention or causal interpretation."
+}

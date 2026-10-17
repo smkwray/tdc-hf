@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from tdchf.qra_borrowing import QRA_REQUIRED_COLUMNS, parse_borrowing_release
 
@@ -45,6 +46,7 @@ def test_parse_trillion_amount_rounds_at_parse_boundary() -> None:
     assert parsed.prior_estimate_bn == 733.0
 
 
+@pytest.mark.integration
 def test_qra_borrowing_output_schema_and_arithmetic() -> None:
     path = Path("data/processed/qra_borrowing_surprise.csv")
     assert path.exists(), "generated QRA borrowing surprise CSV is required for anti-drift coverage"
@@ -61,6 +63,7 @@ def test_qra_borrowing_output_schema_and_arithmetic() -> None:
     assert "verified" not in set(df["parse_quality"].dropna())
 
 
+@pytest.mark.integration
 def test_qra_borrowing_output_pins_independently_verified_values() -> None:
     path = Path("data/processed/qra_borrowing_surprise.csv")
     assert path.exists(), "generated QRA borrowing surprise CSV is required for anti-drift pins"

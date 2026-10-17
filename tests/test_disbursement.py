@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from tdchf.cli import build_parser
 from tdchf.disbursement import (
@@ -118,6 +119,7 @@ def test_tax_stitch_excludes_dedicated_subtotal_rows() -> None:
     assert round(float(annual["tax_withheld_bn"]), 3) == 3.122
 
 
+@pytest.mark.integration
 def test_real_tax_anchor_continuity_uses_component_rows() -> None:
     tx = pd.read_csv("data/raw/fiscaldata/dts_deposits_withdrawals_operating_cash.csv", parse_dates=["record_date"], low_memory=False)
     dedicated = pd.read_csv("data/raw/fiscaldata/dts_federal_tax_deposits.csv", parse_dates=["record_date"], low_memory=False)
@@ -142,6 +144,13 @@ def test_crosswalk_mapping_keeps_core_and_broad_split() -> None:
     assert map_dts_category("Deposits", "Taxes - Withheld Individual/FICA") == "tax_withheld"
     assert map_dts_category("Deposits", "Public Debt Cash Issues (Table III-B)") == "debt_issues_gross"
     assert map_dts_category("Deposits", "Unknown Giant Category") == "unmapped"
+    # Every International Assistance Programs line, including the residual "misc"
+    # line whose cumulative withdrawals crossed the crosswalk gate's $10bn threshold
+    # in the 2026Q3 data, sits outside the six settlement streams: none of them can
+    # enter a treatment, control or reconciliation-stream bucket.
+    for transaction_type, outside in (("Withdrawals", "other_withdrawals"), ("Deposits", "other_deposits")):
+        for category in ("IAP - Agency for Int'l Development (AID)", "Int'l Assistance Programs (IAP) - misc"):
+            assert map_dts_category(transaction_type, category) == outside
 
 
 def test_weekly_decomposition_writes_reconciled_core_panel(tmp_path) -> None:

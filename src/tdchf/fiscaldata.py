@@ -179,10 +179,13 @@ def download_default_dts_sources(
     *,
     out_dir: str | Path = "data/raw/fiscaldata",
     start_date: str = "2005-01-01",
+    end_date: str | None = None,
     page_size: int = 10_000,
     max_workers: int = 12,
 ) -> dict[str, object]:
+    """Download the DTS tables; ``end_date`` bounds every table at a declared vintage endpoint."""
     root = Path(out_dir)
+    dates = [f"record_date:gte:{start_date}", *([f"record_date:lte:{end_date}"] if end_date else [])]
     root.mkdir(parents=True, exist_ok=True)
     ocb_fields = [
         "record_date",
@@ -235,7 +238,7 @@ def download_default_dts_sources(
         DTS_OPERATING_CASH_BALANCE,
         out_csv=root / "dts_operating_cash_balance.csv",
         fields=ocb_fields,
-        filters=[f"record_date:gte:{start_date}"],
+        filters=dates,
         sort="record_date",
         page_size=page_size,
         max_workers=max_workers,
@@ -244,7 +247,7 @@ def download_default_dts_sources(
         DTS_DEPOSITS_WITHDRAWALS,
         out_csv=root / "dts_federal_reserve_earnings.csv",
         fields=remit_fields,
-        filters=[f"record_date:gte:{start_date}", "transaction_catg:eq:Federal Reserve Earnings"],
+        filters=[*dates, "transaction_catg:eq:Federal Reserve Earnings"],
         sort="record_date",
         page_size=page_size,
         max_workers=max_workers,
@@ -253,7 +256,7 @@ def download_default_dts_sources(
         DTS_DEPOSITS_WITHDRAWALS,
         out_csv=root / "dts_deposits_withdrawals_operating_cash.csv",
         fields=remit_fields,
-        filters=[f"record_date:gte:{start_date}"],
+        filters=dates,
         sort="record_date,src_line_nbr",
         page_size=page_size,
         max_workers=max_workers,
@@ -262,7 +265,7 @@ def download_default_dts_sources(
         DTS_INCOME_TAX_REFUNDS,
         out_csv=root / "dts_income_tax_refunds_issued.csv",
         fields=refund_fields,
-        filters=[f"record_date:gte:{start_date}"],
+        filters=dates,
         sort="record_date,src_line_nbr",
         page_size=page_size,
         max_workers=max_workers,
@@ -271,7 +274,7 @@ def download_default_dts_sources(
         DTS_FEDERAL_TAX_DEPOSITS,
         out_csv=root / "dts_federal_tax_deposits.csv",
         fields=tax_fields,
-        filters=[f"record_date:gte:{start_date}"],
+        filters=dates,
         sort="record_date,src_line_nbr",
         page_size=page_size,
         max_workers=max_workers,
@@ -280,6 +283,7 @@ def download_default_dts_sources(
         "status": "ok",
         "out_dir": str(root),
         "start_date": start_date,
+        "end_date": end_date,
         "sources": {
             "operating_cash_balance": ocb,
             "federal_reserve_earnings": remit,

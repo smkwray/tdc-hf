@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
-from tdchf.qra_event_lp import HORIZONS, OUTCOME_SPECS, construct_qra_event_panel, estimate_qra_event_lps, normalize_weekly_panel_units
+import tdchf.qra_event_lp as qra_event_lp
+from tdchf.qra_event_lp import HORIZONS, OUTCOME_SPECS, EventWeek, construct_qra_event_panel, estimate_qra_event_lps, normalize_weekly_panel_units
 
 
 def test_qra_event_panel_alignment_has_no_lookahead(tmp_path) -> None:
@@ -97,3 +99,68 @@ def test_qra_event_lp_smoke_recovers_planted_beta() -> None:
 
     assert round(float(row["beta"]), 2) == 0.25
     assert round(float(row["beta_per_100bn"]), 1) == 25.0
+
+
+def _write_state_fixture(tmp_path, release_dates: list[str], onrrp: dict[str, float]):
+    qra = tmp_path / "qra.csv"
+    weekly = tmp_path / "weekly.csv"
+    gdp = tmp_path / "gdp.csv"
+    pd.DataFrame(
+        {
+            "event_id": [f"e{idx}" for idx in range(len(release_dates))],
+            "quarter": [pd.Timestamp(value).to_period("Q").strftime("%YQ%q") for value in release_dates],
+            "release_date": release_dates,
+            "surprise_bn": [100.0] * len(release_dates),
+            "prior_estimate_bn": [500.0] * len(release_dates),
+        }
+    ).to_csv(qra, index=False)
+    dates = pd.date_range("2023-11-01", periods=40, freq="W-WED")
+    pd.DataFrame(
+        {
+            "date": dates,
+            "broad_deposits_nsa": np.arange(len(dates), dtype=float),
+            "onrrp": [onrrp.get(day.date().isoformat(), 20.0) for day in dates],
+        }
+    ).to_csv(weekly, index=False)
+    pd.DataFrame({"observation_date": ["2023-10-01", "2024-01-01", "2024-04-01"], "GDP": [20000.0] * 3}).to_csv(gdp, index=False)
+    return qra, weekly, gdp
+
+
+def test_qra_on_rrp_state_is_read_at_the_pre_window_base_week(tmp_path) -> None:
+    # Outcomes are changes from the base week. If the state were read at the
+    # event week, an ON RRP move inside the measured window (10bn -> 100bn here)
+    # would reclassify the event as RRP-active.
+    qra, weekly, gdp = _write_state_fixture(tmp_path, ["2024-01-22"], {"2024-01-10": 10.0, "2024-01-17": 100.0})
+
+    panel = construct_qra_event_panel(qra, weekly, gdp_csv=gdp, outcome_specs={"deposits_dpsacb": "broad_deposits_nsa"}, horizons=[1])
+
+    row = panel.iloc[0]
+    assert (row["base_date"], row["week_date"]) == ("2024-01-10", "2024-01-17")
+    assert row["rrp_lag_bn"] == 10.0
+    assert not row["rrp_active"]
+    assert row["rrp_state_date"] == "2024-01-10"
+
+
+def test_qra_state_strictly_precedes_every_announcement(tmp_path) -> None:
+    releases = ["2024-01-29", "2024-04-29", "2024-07-29"]
+    qra, weekly, gdp = _write_state_fixture(tmp_path, releases, {})
+
+    panel = construct_qra_event_panel(qra, weekly, gdp_csv=gdp, outcome_specs={"deposits_dpsacb": "broad_deposits_nsa"}, horizons=[1, 4])
+
+    events = panel[["release_date", "week_date", "base_date", "rrp_state_date"]].drop_duplicates()
+    assert sorted(events["release_date"]) == releases
+    state = pd.to_datetime(events["rrp_state_date"])
+    assert (state <= pd.to_datetime(events["base_date"])).all()
+    assert (state < pd.to_datetime(events["week_date"])).all()
+    assert (state < pd.to_datetime(events["release_date"])).all()
+
+
+def test_qra_event_panel_rejects_a_window_that_does_not_precede_the_release(tmp_path, monkeypatch) -> None:
+    qra, weekly, gdp = _write_state_fixture(tmp_path, ["2024-01-22"], {})
+
+    def misaligned(release_date, weekly_dates):
+        return EventWeek(release_date=release_date, week_date=pd.Timestamp("2024-01-24"), base_date=pd.Timestamp("2024-01-17"))
+
+    monkeypatch.setattr(qra_event_lp, "find_event_week", misaligned)
+    with pytest.raises(ValueError, match="not predetermined"):
+        construct_qra_event_panel(qra, weekly, gdp_csv=gdp, outcome_specs={"deposits_dpsacb": "broad_deposits_nsa"}, horizons=[1])

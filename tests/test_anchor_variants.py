@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from tdchf.anchor_variants import AnchorVariantSpec, run_anchor_variant_robustness_csv
+from tdchf.anchor_variants import run_anchor_variant_robustness_csv
 
 
 def test_run_anchor_variant_robustness_csv_builds_du_outputs(tmp_path) -> None:

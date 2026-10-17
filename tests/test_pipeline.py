@@ -7,8 +7,8 @@ import pandas as pd
 from tdchf.pipeline import run_monthly_proxy_pipeline
 
 
-def test_run_monthly_proxy_pipeline_from_tdcest_anchors(tmp_path) -> None:
-    report = run_monthly_proxy_pipeline(out_dir=tmp_path)
+def test_run_monthly_proxy_pipeline_from_tdcest_anchors(tmp_path, quarterly_anchors_path) -> None:
+    report = run_monthly_proxy_pipeline(out_dir=tmp_path, quarterly_anchors_path=quarterly_anchors_path)
 
     assert report["status"] == "ok"
     assert (tmp_path / "tdc_monthly_components.csv").exists()

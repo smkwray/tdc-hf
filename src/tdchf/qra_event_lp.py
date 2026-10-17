@@ -144,7 +144,16 @@ def construct_qra_event_panel(
         surprise = float(event["surprise_bn"])
         gdp_bn = float(gdp.get(quarter, np.nan))
         rrp_state_col = "onrrp" if "onrrp" in weekly.columns else "fed_liquidity_facilities"
-        rrp_lag_bn = float(weekly.iloc[week_pos][rrp_state_col]) if rrp_state_col in weekly.columns else np.nan
+        # Outcomes are changes from the base week, so the ON RRP state is read
+        # at the base week: inside the window it would already contain part of
+        # the measured response.
+        state_date = event_week.base_date
+        if not (state_date <= event_week.base_date < event_week.week_date < release_date.normalize()):
+            raise ValueError(
+                f"QRA state for {release_date.date()} is not predetermined: state {state_date.date()}, "
+                f"base {event_week.base_date.date()}, event week {event_week.week_date.date()}"
+            )
+        rrp_lag_bn = float(weekly.iloc[base_pos][rrp_state_col]) if rrp_state_col in weekly.columns else np.nan
         tga_prior = pd.to_numeric(pd.Series([event.get("tga_assumption_prior_bn")]), errors="coerce").iloc[0]
         tga_announced = pd.to_numeric(pd.Series([event.get("tga_assumption_announced_bn")]), errors="coerce").iloc[0]
         tga_component = float(tga_announced - tga_prior) if pd.notna(tga_announced) and pd.notna(tga_prior) else np.nan
@@ -184,6 +193,7 @@ def construct_qra_event_panel(
                         "post_2020": release_date >= pd.Timestamp("2020-01-01"),
                         "rrp_active": bool(pd.notna(rrp_lag_bn) and rrp_lag_bn > 50.0),
                         "rrp_lag_bn": rrp_lag_bn,
+                        "rrp_state_date": state_date.date().isoformat(),
                         "tga_target_component_bn": tga_component,
                         "deficit_component_bn": surprise - tga_component if pd.notna(tga_component) else np.nan,
                     }

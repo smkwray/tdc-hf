@@ -136,3 +136,22 @@ def test_build_dts_transaction_indicators_csv(tmp_path) -> None:
     assert out.loc[0, "dts_core_payment_withdrawals"] == 50.0
     assert out.loc[0, "dts_net_withdrawals"] == -54.0
     assert "dts_tax_deposits" in set(metadata["component"])
+
+
+def test_default_dts_download_bounds_every_table_at_the_vintage_endpoint(monkeypatch, tmp_path) -> None:
+    # A vintage refresh must not admit DTS days after its declared endpoint into any
+    # table; without an endpoint the admitted unbounded request is unchanged.
+    calls: list[list[str]] = []
+
+    def fake_write(endpoint, *, out_csv, filters, **kwargs):  # noqa: ANN001, ANN003
+        calls.append(list(filters))
+        return {"status": "ok", "out": str(out_csv)}
+
+    monkeypatch.setattr(fiscaldata, "write_fiscaldata_csv", fake_write)
+    report = fiscaldata.download_default_dts_sources(out_dir=tmp_path, end_date="2026-09-30")
+    assert report["end_date"] == "2026-09-30"
+    assert len(calls) == 5
+    assert all("record_date:gte:2005-01-01" in f and "record_date:lte:2026-09-30" in f for f in calls)
+    calls.clear()
+    fiscaldata.download_default_dts_sources(out_dir=tmp_path)
+    assert all(not any(item.startswith("record_date:lte") for item in f) for f in calls)

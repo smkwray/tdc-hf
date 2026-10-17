@@ -11,8 +11,8 @@ def test_resolve_repos_finds_tdcest_contract() -> None:
     assert "components" in repos["tdcest"].preferred_outputs
 
 
-def test_load_tdcest_quarterly_anchors_has_expected_components() -> None:
-    anchors = load_tdcest_quarterly_anchors()
+def test_load_tdcest_quarterly_anchors_has_expected_components(quarterly_anchors_path) -> None:
+    anchors = load_tdcest_quarterly_anchors(quarterly_anchors_path)
 
     assert set(anchors) == {"fed_tsy", "banks_tsy", "row_tsy", "minus_toc", "fed_remit_positive"}
     assert anchors["fed_tsy"].index.is_monotonic_increasing

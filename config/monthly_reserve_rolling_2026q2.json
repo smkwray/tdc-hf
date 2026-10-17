@@ -1,0 +1,50 @@
+{
+  "schema": "monthly_reserve_rolling_v1",
+  "vintage": "2026q2",
+  "authority": "Monthly and three-month reserve projections with the money-market-fund route term, using a common monthly sample across exposure definitions and a calendar-quarter comparison.",
+  "source": {
+    "producer": "tdcest",
+    "producer_commit": "08e0785",
+    "root": "data/refresh_2026q2_monthly/trc_monthly_v1",
+    "table": {
+      "name": "trc_monthly_v1.csv",
+      "sha256": "eab7c28a3afe723d257f8980f84ef477d6fda54482db47bbf6d507894f623242",
+      "bytes": 55831
+    },
+    "receipt": {
+      "name": "trc_monthly_v1_receipt.json",
+      "sha256": "f17741c8c2c4a6c8379b8f38a9c0a7a0eaca45ce409f749c68c1600bf6ea3285",
+      "bytes": 1448
+    }
+  },
+  "outcome": "delta_reserve_balances (H.4.1, last Wednesday to last Wednesday)",
+  "exposures": {
+    "trc_preferred": "core TRC plus the money-fund ON RRP route term (primary; zero before 2013-09)",
+    "trc_core": "core TRC without the route term (check)"
+  },
+  "horizons": {
+    "1": {
+      "months": 1,
+      "hac_width": 3,
+      "minimum_observations": 40
+    },
+    "3": {
+      "months": 3,
+      "hac_width": 6,
+      "minimum_observations": 38
+    }
+  },
+  "horizon_definition": "For start month t and horizon h: y = sum of the reserve change over months t..t+h-1 and x = sum of the exposure over the same months; every start month gives one overlapping observation; all h months must be present.",
+  "controls": "intercept and eleven dummies for the calendar month of the start month",
+  "window_months": 48,
+  "window_rule": "Start months t with window_end - 47 <= t and t + h - 1 <= window_end, so every summed month lies inside the 48-month window",
+  "interval": "Conventional Newey-West: Bartlett weights 1 - lag/(L+1) over month distance, L = hac_width (3 for one month; 6 for three-month overlapping sums), scale n/(n-k); nominal pointwise 95% normal interval; not separately calibrated.",
+  "dating": "window midpoint",
+  "scope": "Descriptive sample dependence; overlapping windows and, at three months, overlapping observations are not independent; the route term's clock is the calendar month (N-MFP month-end) against last-Wednesday reserves; no landing, retention or causal interpretation.",
+  "common_sample": "Every exposure uses only the months where all declared exposures are present (ends 2026-06, the last filed money-fund month), so corrected and uncorrected coefficients cover the same months.",
+  "horizon_labels": {
+    "1": "one month",
+    "3": "three-month horizon (overlapping sums starting every month; not calendar quarters)"
+  },
+  "calendar_quarter_check": "Pooled three-month coefficients restricted to January, April, July and October start months (non-overlapping calendar quarters) are also reported, as a bridge to the quarterly coefficients."
+}

@@ -68,3 +68,35 @@ steps:
     assert report["rows"] == 2
     assert (tmp_path / "spec_manifest.csv").exists()
     assert (tmp_path / "spec_manifest.md").exists()
+
+
+def test_run_receipt_binds_commit_and_hashes_and_never_replaces(tmp_path, monkeypatch) -> None:
+    import pytest
+
+    from tdchf import manifest
+
+    state = {"status": ""}
+
+    def git(command, **kwargs):  # noqa: ANN001, ANN003
+        return "abc123\n" if command[1] == "rev-parse" else state["status"]
+
+    monkeypatch.setattr(manifest.subprocess, "check_output", git)
+    source = tmp_path / "in.csv"
+    source.write_text("a\n1\n", encoding="utf-8")
+    result = tmp_path / "out.csv"
+    result.write_text("b\n2\n", encoding="utf-8")
+    receipt_path = tmp_path / "receipt.json"
+    report = manifest.write_run_receipt(receipt_path, inputs=["in.csv"], outputs=["out.csv"], steps=["tdchf x"], vintage="v", root=tmp_path)
+    receipt = json.loads(receipt_path.read_text())
+    assert report["sha256"] == manifest._sha256(receipt_path)
+    assert (receipt["producer_commit"], receipt["vintage"], receipt["steps"]) == ("abc123", "v", ["tdchf x"])
+    assert receipt["inputs"][0]["sha256"] == manifest._sha256(source)
+    assert receipt["outputs"][0]["sha256"] == manifest._sha256(result)
+    with pytest.raises(FileExistsError):
+        manifest.write_run_receipt(receipt_path, inputs=["in.csv"], outputs=["out.csv"], root=tmp_path)
+    with pytest.raises(FileNotFoundError, match="missing"):
+        manifest.write_run_receipt(tmp_path / "r2.json", inputs=["absent.csv"], outputs=["out.csv"], root=tmp_path)
+    state["status"] = " M src/tdchf/x.py"
+    with pytest.raises(ValueError, match="commit the producer"):
+        manifest.write_run_receipt(tmp_path / "r3.json", inputs=["in.csv"], outputs=["out.csv"], root=tmp_path)
+    assert not (tmp_path / "r2.json").exists() and not (tmp_path / "r3.json").exists()

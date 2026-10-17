@@ -1,0 +1,35 @@
+{
+  "schema": "weekly_reserve_offsets_v1",
+  "vintage": "2026q2",
+  "authority": "Unchanged reserve-offset design on the 2026Q2 vintage through Wednesday 2026-09-30; only the final-era and full-sample endpoints and input pins change.",
+  "source_receipt_sha256": "d55e611d08d0668fe1c736ce21bcbbbb8b4a5efa9a52d2c11c6a8579888252f2",
+  "ledger_sha256": "0409f778d0a2e20fbe3aa0c743b50830f6f5df51e00511d46c5a7a3ea867c894",
+  "ledger_receipt_sha256": "1b3feaa5948ea23c62a3c209579e4932dac49d79856121843f005a64e286509c",
+  "eras": [
+    [
+      "era_2003_2008",
+      "2003-01-01",
+      "2008-09-30"
+    ],
+    [
+      "transition_2008q4",
+      "2008-10-01",
+      "2008-12-31"
+    ],
+    [
+      "era_2009_2015",
+      "2009-01-01",
+      "2015-09-30"
+    ],
+    [
+      "transition_2015q4",
+      "2015-10-01",
+      "2015-12-31"
+    ],
+    [
+      "era_2016_2026q3",
+      "2016-01-01",
+      "2026-09-30"
+    ]
+  ]
+}

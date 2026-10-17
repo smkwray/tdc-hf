@@ -20,13 +20,12 @@ REQUIRED_DATA = {
     "weekly_panel": PROJECT_ROOT / "data/processed/tdc_weekly_channel_panel.csv",
     "state_sources": PROJECT_ROOT / "data/raw/fred_state_response_sources.csv",
 }
-pytestmark = pytest.mark.skipif(
-    not all(path.is_file() for path in REQUIRED_DATA.values()),
-    reason="requires project-local generated flow panels and raw state-source data",
-)
+pytestmark = pytest.mark.integration
 
 
 def test_real_state_and_placebo_failures_reproduce(tmp_path) -> None:
+    missing = [name for name, path in REQUIRED_DATA.items() if not path.is_file()]
+    assert not missing, f"Required integration inputs are absent: {missing}"
     flows = pd.read_csv(
         REQUIRED_DATA["flows"],
         parse_dates=["date"],

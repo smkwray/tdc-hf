@@ -1,0 +1,83 @@
+{
+  "schema": "weekly_trc_projection_v1",
+  "source_main": "aa43000d994c872c2c94ea48251565a933b0879a",
+  "inputs": {
+    "data/processed/trc_weekly_components_v1.csv": "5f4fc24ea6abe9d4de0c949c5efb9ed46f9f91f507a6ce6dc9d15a35921c2032",
+    "data/processed/trc_weekly_identity_v1.csv": "52809d1414c2dd7c512ad4a0508247b9ffb0075bf73c879ec32384c6453becdc",
+    "data/processed/trc_weekly_route_daily_v1.csv": "7e023f9b7a525b594c4c4cdeb9f72968ddfdbf9b9e220389d13ebe18f7ff0559",
+    "data/processed/trc_weekly_v1_receipt.json": "6bcf0fc4cbb4b419fccd3d7b391b3e22d0a3df6501dd9fbfa49cc2d1f4e56fb4",
+    "data/processed/reserve_factor_ledger_weekly_v1.csv": "0409f778d0a2e20fbe3aa0c743b50830f6f5df51e00511d46c5a7a3ea867c894",
+    "data/processed/reserve_factor_ledger_v1_receipt.json": "62d6ac96136dba8b4c76a1ce7e1c7d4f8364f7322fe4160a3f7a55614d3deec3",
+    "data/raw/fiscus/h41_ledger/rrp_others.csv": "422d0007998fed78361c35558c57c0e527ce7f0bd541ea09d702e9366fd2c23f"
+  },
+  "route_paths": {
+    "zero": [
+      0,
+      0
+    ],
+    "forward_10": [
+      0.1,
+      0
+    ],
+    "reverse_10": [
+      0,
+      0.1
+    ],
+    "symmetric_10": [
+      0.1,
+      0.1
+    ],
+    "forward_25": [
+      0.25,
+      0
+    ],
+    "reverse_25": [
+      0,
+      0.25
+    ],
+    "symmetric_25": [
+      0.25,
+      0.25
+    ],
+    "forward_100_stress": [
+      1,
+      0
+    ],
+    "reverse_100_stress": [
+      0,
+      1
+    ]
+  },
+  "horizons": [
+    0,
+    1,
+    4,
+    8
+  ],
+  "bootstrap": {
+    "bandwidths": [
+      12,
+      4,
+      8
+    ],
+    "replications": 999,
+    "calibration_replications": 499,
+    "calibration_simulations": 1000,
+    "seed": 20261010,
+    "size_limit": 0.075,
+    "coverage_floor": 0.9,
+    "mc_z": 1.96,
+    "dgps": [
+      "gaussian",
+      "concentrated_heteroskedasticity",
+      "crisis_blocks",
+      "persistent_ar1",
+      "t4_heavy_tails"
+    ],
+    "coverage_target": [
+      0.3,
+      -0.2
+    ]
+  },
+  "interpretation": "Declared route assumptions; conditional projections; endpoint fits are scenarios."
+}

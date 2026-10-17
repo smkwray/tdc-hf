@@ -1,0 +1,113 @@
+{
+  "schema": "weekly_trc_projection_v1",
+  "vintage": "2026q2",
+  "authority": "Unchanged predeclared weekly TRC design on the 2026Q2 vintage through Wednesday 2026-09-30; only the modern and pooled era endpoints and input pins change.",
+  "source_main": "d892731d44bb4b4770ca0010327e21b3f6b5568c",
+  "inputs": {
+    "RECEIPT.json": "d55e611d08d0668fe1c736ce21bcbbbb8b4a5efa9a52d2c11c6a8579888252f2",
+    "data/processed/trc_weekly_components_v1.csv": "68dabee345c2383fabc5d8826e19587bfb9c7d56e905da1528d49ac154f3bb95",
+    "data/processed/trc_weekly_identity_v1.csv": "c26c358295309e46baed15c5734f2174ba4ae0769231cca0c1ddd8fdaede8535",
+    "data/processed/trc_weekly_route_daily_v1.csv": "e23f402a2f6f6b9f9e50e03ba038b4bcf22409144e7413c52aa194624963650a",
+    "data/processed/trc_weekly_v1_receipt.json": "eb97e3c72bb5b684e727935fefe91e2110e7317c88be150387f1cf59a9001976",
+    "data/processed/reserve_factor_ledger_weekly_v1.csv": "0409f778d0a2e20fbe3aa0c743b50830f6f5df51e00511d46c5a7a3ea867c894",
+    "data/processed/reserve_factor_ledger_v1_receipt.json": "1b3feaa5948ea23c62a3c209579e4932dac49d79856121843f005a64e286509c",
+    "data/raw/fiscus/h41_ledger/rrp_others.csv": "422d0007998fed78361c35558c57c0e527ce7f0bd541ea09d702e9366fd2c23f"
+  },
+  "eras": {
+    "pooled": [
+      "2005-10-12",
+      "2026-09-30"
+    ],
+    "2005-10-12_2008Q3": [
+      "2005-10-12",
+      "2008-09-30"
+    ],
+    "2008Q4_transition": [
+      "2008-10-01",
+      "2008-12-31"
+    ],
+    "2009Q1_2015Q3": [
+      "2009-01-01",
+      "2015-09-30"
+    ],
+    "2015Q4_transition": [
+      "2015-10-01",
+      "2015-12-31"
+    ],
+    "2016Q1_2026Q3": [
+      "2016-01-01",
+      "2026-09-30"
+    ]
+  },
+  "modern": "2016Q1_2026Q3",
+  "route_paths": {
+    "zero": [
+      0,
+      0
+    ],
+    "forward_10": [
+      0.1,
+      0
+    ],
+    "reverse_10": [
+      0,
+      0.1
+    ],
+    "symmetric_10": [
+      0.1,
+      0.1
+    ],
+    "forward_25": [
+      0.25,
+      0
+    ],
+    "reverse_25": [
+      0,
+      0.25
+    ],
+    "symmetric_25": [
+      0.25,
+      0.25
+    ],
+    "forward_100_stress": [
+      1,
+      0
+    ],
+    "reverse_100_stress": [
+      0,
+      1
+    ]
+  },
+  "horizons": [
+    0,
+    1,
+    4,
+    8
+  ],
+  "bootstrap": {
+    "bandwidths": [
+      12,
+      4,
+      8
+    ],
+    "replications": 999,
+    "calibration_replications": 499,
+    "calibration_simulations": 1000,
+    "seed": 20261010,
+    "size_limit": 0.075,
+    "coverage_floor": 0.9,
+    "mc_z": 1.96,
+    "dgps": [
+      "gaussian",
+      "concentrated_heteroskedasticity",
+      "crisis_blocks",
+      "persistent_ar1",
+      "t4_heavy_tails"
+    ],
+    "coverage_target": [
+      0.3,
+      -0.2
+    ]
+  },
+  "interpretation": "Declared route assumptions; conditional projections; endpoint fits are scenarios."
+}
