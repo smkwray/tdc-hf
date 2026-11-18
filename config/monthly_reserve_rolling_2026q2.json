@@ -4,16 +4,16 @@
   "authority": "Monthly and three-month reserve projections with the money-market-fund route term, using a common monthly sample across exposure definitions and a calendar-quarter comparison.",
   "source": {
     "producer": "tdcest",
-    "producer_commit": "08e0785",
+    "producer_commit": "96b22d1",
     "root": "data/refresh_2026q2_monthly/trc_monthly_v1",
     "table": {
       "name": "trc_monthly_v1.csv",
-      "sha256": "eab7c28a3afe723d257f8980f84ef477d6fda54482db47bbf6d507894f623242",
-      "bytes": 55831
+      "sha256": "ae77a6aeb5a864286c4673676d0500ad83572a77192d649e533b964fed520dc8",
+      "bytes": 55839
     },
     "receipt": {
       "name": "trc_monthly_v1_receipt.json",
-      "sha256": "f17741c8c2c4a6c8379b8f38a9c0a7a0eaca45ce409f749c68c1600bf6ea3285",
+      "sha256": "145b36bc927b9fac53352c89b4ae9c216918609b2c9ec336858ab7388d245383",
       "bytes": 1448
     }
   },

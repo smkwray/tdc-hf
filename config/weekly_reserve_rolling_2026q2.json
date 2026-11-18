@@ -2,15 +2,16 @@
   "schema": "weekly_reserve_rolling_v1",
   "vintage": "2026q2",
   "authority": "Descriptive rolling two-year weekly reserve projections on core TRC, retaining time variation and declared inference limitations.",
-  "source_main": "d892731d44bb4b4770ca0010327e21b3f6b5568c",
+  "source_main": "96b22d1af36112d80429375afb8bf6eceeaae119",
   "inputs": {
     "RECEIPT.json": "d55e611d08d0668fe1c736ce21bcbbbb8b4a5efa9a52d2c11c6a8579888252f2",
-    "data/processed/trc_weekly_components_v1.csv": "68dabee345c2383fabc5d8826e19587bfb9c7d56e905da1528d49ac154f3bb95",
-    "data/processed/trc_weekly_identity_v1.csv": "c26c358295309e46baed15c5734f2174ba4ae0769231cca0c1ddd8fdaede8535",
+    "RECEIPT_ADDENDUM_treasury_fed_transfers.json": "c578b60cc49c94d8ffb1dba258560fd22e23bc0ef82ff733e8c829e2b2985460",
+    "data/processed/trc_weekly_components_v1.csv": "983b0701146d6cfa103c690cead29466e948fbacb74520d31a3db898c2941b6c",
+    "data/processed/trc_weekly_identity_v1.csv": "85023f3cfa6a856acbcfe2a805ff800ec8533ef9a2c5d361aaa7c5231dc72742",
     "data/processed/trc_weekly_route_daily_v1.csv": "e23f402a2f6f6b9f9e50e03ba038b4bcf22409144e7413c52aa194624963650a",
-    "data/processed/trc_weekly_v1_receipt.json": "eb97e3c72bb5b684e727935fefe91e2110e7317c88be150387f1cf59a9001976",
+    "data/processed/trc_weekly_v1_receipt.json": "aba70b5288b6fc3f2afc1055fb422af60b00a4522591540d423ba0e70ed142fe",
     "data/processed/reserve_factor_ledger_weekly_v1.csv": "0409f778d0a2e20fbe3aa0c743b50830f6f5df51e00511d46c5a7a3ea867c894",
-    "data/processed/reserve_factor_ledger_v1_receipt.json": "1b3feaa5948ea23c62a3c209579e4932dac49d79856121843f005a64e286509c",
+    "data/processed/reserve_factor_ledger_v1_receipt.json": "0f2f923590a9c132b5992aaf811cc32e57675e85cebb72db3ff083c7b5c7660a",
     "data/raw/fiscus/h41_ledger/rrp_others.csv": "422d0007998fed78361c35558c57c0e527ce7f0bd541ea09d702e9366fd2c23f"
   },
   "eras": {
