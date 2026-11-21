@@ -1,104 +1,51 @@
-# TDC-HF
+# tdc-hf
 
-TDC-HF builds high-frequency Treasury Deposit Component (TDC) measurement and
-diagnostic datasets from public Treasury and Federal Reserve sources. It keeps
-directly observed settlement flows, generated monthly allocations, and
-announcement-time measures separate, and estimates descriptive deposit and
-reserve associations with explicit timing, perimeter, and inference limits.
+`tdc-hf` builds daily, weekly, and monthly Treasury-flow panels and estimates high-frequency deposit and reserve projections around Treasury cash flows, H.4.1 reserve factors, and Quarterly Refunding Announcements (QRA). It reads public Federal Reserve and Treasury data alongside quarterly and weekly tables from [tdcest](https://github.com/smkwray/tdcest) and writes CSV tables, Markdown readouts, and JSON receipts under `output/`.
 
-## What it provides
+## What it does
 
-| Lane | Output and interpretation |
-| --- | --- |
-| Daily Treasury Statement bridge | Separate gross credits, drains, debt issuance, and debt redemption, reconciled by settlement quarter and by the Federal Reserve H.8 commercial-bank reporting week |
-| Directly timed deposit profiles | Conditional associations between gross Treasury flows and cumulative changes in H.8 commercial-bank deposits |
-| Weekly reserve projections | Treasury cash-leg or core Treasury Reserve Component (TRC) exposures, signed H.4.1 reserve-factor decompositions, event paths, and calibration diagnostics |
-| Reserve history and rolling projections | Weekly period coefficients, two-year rolling weekly coefficients, and monthly/three-month reserve associations with a money-market-fund route term |
-| Monthly benchmarking | Generated temporal allocations consistent with a specified quarterly anchor; comparison and validation tools |
-| Announcement diagnostics | Quarterly Refunding Announcement (QRA) news measures, local projections, and instrumental-variable diagnostics |
+The `tdchf` CLI groups four analysis workflows:
 
-A weekly channel dataset is not a weekly TDC level. Generated monthly allocations
-do not observe intraquarter Treasury settlement timing. The legacy five-component
-monthly benchmark does not allocate the current corrected quarterly TDC measure.
+- `build-quarterly-hf-bridge` — reconciles Daily Treasury Statement (DTS) gross flows (credits, drains, debt issuance, and debt redemption) by settlement quarter and H.8 bank week (Thursday through Wednesday, labeled by the ending Wednesday) against quarterly `tdcest` series.
+- `run-disbursement-response-profile` — estimates cumulative H.8 commercial-bank deposit-stock projections on gross DTS flows across leads and lags.
+- `run-weekly-reserve-offsets`, `run-weekly-trc-projection`, `run-weekly-reserve-history`, `run-weekly-reserve-rolling`, and `run-monthly-reserve-rolling` — estimate weekly reserve offsets on Treasury cash legs (`-d(TGA) - d(SFP)`), weekly projections on the core Treasury component of reserves (TRC) with period-specific restricted-score wild bootstrap inference, and rolling weekly and monthly reserve paths (adding the money-fund route on the monthly last-Wednesday clock).
+- `run-analysis-spec`, `build-qra-borrowing-surprise`, and `run-qra-event-lp` — allocate quarterly TDC anchors to monthly series via YAML workflows (`config/analysis_fred_denton_shock.yml`, `config/analysis_fred_shock.yml`) and estimate QRA borrowing-surprise local projections.
 
-## Evidence limits
+## Data
 
-The directly timed deposit outcome is the H.8 commercial-bank deposit stock.
-The Treasury treatments are gross Daily Treasury Statement (DTS) flow buckets,
-which are not matched to beneficiary accounts or to that reporting perimeter.
-Coefficients are unnormalized conditional associations, in billions of deposits
-per billion dollars of the named flow. They do not separately identify immediate
-incidence, a post-landing response, retention, causal decay, or a half-life.
+All external series are public:
 
-State diagnostics retain coverage and failed admission checks. No state measure
-is admitted as a capacity index or scenario selector. Weekly reserve calibration
-failures remain visible in every affected coefficient export; a descriptive
-coefficient does not become inferentially valid because its accounting
-components reconcile. The reserve-history test inversion has its own declared
-calibration and numerical resolution, which do not validate the other designs.
-Rolling weekly and monthly projections are descriptive.
+- Federal Reserve FRED series (H.8 commercial-bank deposits, H.4.1 reserve factors, and macro controls declared in `config/series_registry.yml`), downloaded from FRED's public `fredgraph.csv` endpoint without an API key.
+- Treasury Fiscal Data API (`api.fiscaldata.treasury.gov`), covering DTS operating cash balances, deposits and withdrawals of operating cash, income tax refunds issued, and federal tax deposits.
+- Upstream quarterly TDC tables (`tdc_estimates.csv` and summary metadata) and hash-pinned H.4.1 and weekly TRC exports from `tdcest`. By default, `config/upstream_sources.yml` looks for a sibling checkout at `../tdcest`; individual commands accept path overrides such as `--source-root`, `--tdc-estimates`, or `--ledger`.
 
-The reverse-repurchase-agreement (RRP) “other counterparties” balance used in the
-reserve ledger mixes counterparties. It is neither an overnight RRP measure nor
-a measure of money-fund funding routes. Reserve balances plus that balance is a
-separate comparison outcome, not a reserve perimeter.
+## Install
 
-## Install and validate
-
-Use Python 3.11 or later and run from a source checkout:
+Requires Python 3.11 or later. From the repository root:
 
 ```bash
 uv venv
 uv pip install -e '.[dev]'
-uv run --no-sync python -B -m tdchf --help
-uv run --no-sync python -B -m pytest
-uvx ruff check .
 ```
 
-Run the self-contained synthetic benchmarking demo:
+## Usage
+
+Check the CLI and run the offline synthetic benchmarking demo (writes `tdc_monthly_components.csv`, `tdc_monthly_proxy.csv`, and `tdc_validation_report.json` to `output/demo/`):
 
 ```bash
+uv run --no-sync python -B -m tdchf --help
 uv run --no-sync python -B -m tdchf demo --out output/demo
 ```
 
-The demo uses six synthetic months and two quarterly anchors, and writes
-monthly series plus a validation report. It needs no downloaded data or sibling checkout. The default test suite uses small fixtures and excludes the four data-backed
-integration checks. Run those checks explicitly after supplying the required
-local DTS, QRA, and state-response inputs:
-
-```bash
-uv run --no-sync python -B -m pytest -m integration
-```
-
-The integration lane fails when required data is absent; it does not turn a
-missing-data check into a passing result.
-
-## Data and reproducibility
-
-[TDCest](https://github.com/smkwray/tdcest) supplies quarterly anchors and the
-hash-pinned Treasury-flow and reserve-factor exports. Source locations and
-contracts live in `config/upstream_sources.yml`, `config/series_registry.yml`,
-and the versioned JSON designs. The default layout places `tdcest` next to this
-checkout; the relevant commands expose source-path overrides.
-
-The settlement bridge consumes validated local DTS inputs plus TDCest's
-`data/processed/tdc_estimates.csv` and
-`data/processed/tdc_downstream_handoff_bundle.json`. Its current comparisons
-contain the exact `tdc_tier2_interest_corrected_bank_only_ru_flow` and
-`tdc_base_bank_only_ru_flow` fields. Those producer identifiers are preserved;
-the settlement-system complement is not a bank-sector classification.
-
-Observed events use the DTS settlement date for calendar-quarter assignment.
-H.8 windows run Thursday through Wednesday and are labeled by their ending
-Wednesday. Each gross flow stream reconciles independently. Quarterly anchor
-comparisons have no observed intraquarter timing and no accounting residual
-forcing observed flows to equal a net TDC anchor.
-
-Production commands verify their declared inputs and write local receipts and
-artifacts. Inspect the command and its configuration before estimating:
+Check whether sibling upstream files declared in `config/upstream_sources.yml` are present:
 
 ```bash
 uv run --no-sync python -B -m tdchf doctor
+```
+
+Inspect required paths and SHA-256 options for any production command with `--help`:
+
+```bash
 uv run --no-sync python -B -m tdchf build-quarterly-hf-bridge --help
 uv run --no-sync python -B -m tdchf run-disbursement-response-profile --help
 uv run --no-sync python -B -m tdchf run-weekly-reserve-offsets --help
@@ -106,31 +53,33 @@ uv run --no-sync python -B -m tdchf run-weekly-trc-projection --help
 uv run --no-sync python -B -m tdchf run-weekly-reserve-history --help
 uv run --no-sync python -B -m tdchf run-weekly-reserve-rolling --help
 uv run --no-sync python -B -m tdchf run-monthly-reserve-rolling --help
+uv run --no-sync python -B -m tdchf run-analysis-spec --help
 ```
 
-`doctor` reports available sibling inputs; it is not a scientific approval.
-A clean checkout does not contain production data. Hash mismatches and missing
-required observations stop the relevant producer. Calibration runs can take
-substantially longer than the synthetic demo or tests. Use a new output
-location where a producer requires an absent destination; preserve existing
-bundles and their receipts.
+Pinned reserve commands read their config JSON files under `config/` (for example `config/weekly_trc_projection_v1.json`) and stop if an input file is missing or fails SHA-256 verification.
 
-`run-analysis-spec` executes the ordered steps in a YAML specification.
-`config/analysis_fred_denton_shock.yml` describes the generated monthly
-benchmark and its diagnostics; `config/analysis_fred_shock.yml` describes the
-residual-spread comparison. These workflows download public sources and require
-the declared upstream contracts. They are not installation smoke tests.
+## Output
 
-## Repository layout
+Generated CSV tables, Markdown readouts, manifests, and JSON provenance receipts are written to ignored directories under `output/`—including synthetic monthly demo tables under `output/demo/`, disbursement deposit-stock profile tables, and weekly and monthly reserve projection tables.
 
-- `src/tdchf/`: acquisition, measurement, estimation, and reporting code.
-- `config/`: analysis specifications, source contracts, and dated event definitions.
-- `tests/`: fixture-based regression tests and the separate data-backed check.
-- `data/`: raw downloads and processed panels, ignored by Git.
-- `output/`: generated tables, figures, and receipts, ignored by Git.
-- `docs/`: local method and result notes, ignored by Git.
+## Limits
 
-Related projects include [TDCpass](https://github.com/smkwray/tdcpass) for
-accounting boundary comparisons, [Tsyparty](https://github.com/smkwray/tsyparty)
-for auction and holder-sector context, and
-[WAMEST](https://github.com/smkwray/wamest) for maturity and sector context.
+- Gross DTS disbursement and tax-drain totals aggregate all Treasury cash flows without matching beneficiaries to commercial-bank accounts, so H.8 deposit-stock slopes are unnormalized conditional associations (billions of deposits per billion dollars of flow).
+- Monthly temporal allocations interpolate quarterly anchors; intraquarter timing comes from the monthly indicator series.
+- The H.4.1 reverse-repurchase "other counterparties" series mixes several counterparty types and provides only a coarse proxy for ON RRP or money-fund settlement routes.
+- Integration tests and production commands require local DTS, QRA, and `tdcest` inputs that are excluded from the repository.
+
+## Tests
+
+Run the offline fixture-based test suite and linter:
+
+```bash
+uv run --no-sync python -B -m pytest
+uvx ruff check .
+```
+
+The default pytest configuration excludes tests marked `integration` (which check local DTS, QRA, and state-response datasets). Run them when local data are present:
+
+```bash
+uv run --no-sync python -B -m pytest -m integration
+```
