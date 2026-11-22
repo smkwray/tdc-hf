@@ -671,7 +671,7 @@ def run_rolling(source_root: Path, out: Path, config_path: Path = Path(ROLLING_C
 # ---------------------------------------------------------------------------
 
 MONTHLY_SCHEMA = 'monthly_reserve_rolling_v1'
-MONTHLY_CONFIG = 'config/monthly_reserve_rolling_2026q2.json'
+MONTHLY_CONFIG = 'config/monthly_reserve_rolling_2026q2_canonical_v12.json'
 
 
 def load_monthly(source_root: Path, config: dict) -> pd.DataFrame:
@@ -754,7 +754,7 @@ def monthly_rolling(frame: pd.DataFrame, config: dict) -> tuple[pd.DataFrame, pd
     return pd.DataFrame(rows), pd.DataFrame(pooled)
 
 
-def run_monthly(source_root: Path, out: Path, config_path: Path = Path(MONTHLY_CONFIG)) -> dict:
+def run_monthly(source_root: Path | None, out: Path, config_path: Path = Path(MONTHLY_CONFIG)) -> dict:
     repository = Path(__file__).resolve().parents[2]
     config_name = config_path.resolve().relative_to(repository).as_posix()
     producer = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repository, text=True).strip()
@@ -769,6 +769,8 @@ def run_monthly(source_root: Path, out: Path, config_path: Path = Path(MONTHLY_C
     if out.name != MONTHLY_SCHEMA:
         raise ValueError('output directory must be named for the schema')
     ro._require_unpublished(out)
+    if source_root is None:
+        source_root = repository.parent / config['source']['producer'] / config['source']['root']
     rolling_table, pooled = monthly_rolling(load_monthly(source_root, config), config)
     receipt = {'schema_version': MONTHLY_SCHEMA, 'vintage': config['vintage'], 'producer_commit': producer,
                'config': config_name, 'config_sha256': _sha256(config_path), 'source_root': str(Path(source_root).resolve()),

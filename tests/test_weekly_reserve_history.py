@@ -433,11 +433,12 @@ def test_exposures_share_one_sample_and_calendar_quarter_rows_bridge_to_quarters
     assert quarters.set_index('exposure').loc['trc_core', 'beta'] == pytest.approx(expected, rel=1e-10)
 
 
-def test_canonical_v7_monthly_config_changes_only_the_source_pins():
-    # The v7 TDCest variant changes only the money-fund route term; the rolling design must stay fixed so the
-    # coefficient paths differ from the 2026q2 run only through the source table.
-    base = json.loads((ROOT / h.MONTHLY_CONFIG).read_text())
-    v7 = json.loads((ROOT / 'config/monthly_reserve_rolling_2026q2_canonical_v7.json').read_text())
-    assert set(v7) == set(base)
-    assert {k for k in base if base[k] != v7[k]} == {'source'}
-    assert set(v7['source']) == set(base['source']) and v7['source']['producer'] == 'tdcest'
+def test_canonical_v12_monthly_config_changes_only_the_source_pins():
+    base = json.loads((ROOT / 'config/monthly_reserve_rolling_2026q2.json').read_text())
+    canonical = json.loads((ROOT / h.MONTHLY_CONFIG).read_text())
+    base_source = base.pop('source')
+    source = canonical.pop('source')
+    assert canonical == base
+    assert source.keys() == base_source.keys()
+    assert source['producer'] == 'tdcest'
+    assert source['producer_commit'] == '6af514d569a026e6c2f83a7ba6b2cea2924af253'

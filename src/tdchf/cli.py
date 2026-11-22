@@ -509,9 +509,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     monthly = subparsers.add_parser("run-monthly-reserve-rolling",
                                     help="Monthly and three-month reserve projections with the money-fund route term (descriptive)")
-    monthly.add_argument("--source-root", type=Path, default=Path("../tdcest/data/refresh_2026q2_monthly/trc_monthly_v1"))
+    monthly.add_argument("--source-root", type=Path, help="Override the source directory pinned in the monthly config")
     monthly.add_argument("--config", type=Path, default=Path(weekly_reserve_history.MONTHLY_CONFIG))
-    monthly.add_argument("--out-dir", type=Path, default=Path("output/refresh_2026q2/monthly_reserve_rolling_v1"))
+    monthly.add_argument("--out-dir", type=Path, default=Path("output/refresh_2026q2_canonical_v12/monthly_reserve_rolling_v1"))
 
     return parser
 
