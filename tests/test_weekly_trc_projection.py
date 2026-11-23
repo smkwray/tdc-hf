@@ -1,4 +1,5 @@
 from pathlib import Path
+import dataclasses
 import json
 
 import numpy as np
@@ -62,6 +63,22 @@ def test_horizon_own_flow():
     assert abs(sum(d['contribution'] for d in parts)-(r['beta_R']-1))>1
     assert r['subsequent_TRC']+sum(d['contribution'] for d in parts)==pytest.approx(r['beta_R']-1)
     assert r0['n']==r['n']
+
+
+def test_standard_errors_are_the_weekly_reserve_offset_hac():
+    # Tables print these beside the weekly reserve-offset SEs under one HAC description, so
+    # they must be that estimator, with missing weeks counted as calendar distance.
+    p=fixture_panel(260); v=w.variant(p,'trc_core',(.25,.1))
+    rows=w.common_mask([v],'calendar',0).delete(slice(40,46))
+    row,_=w.project(v,rows,'calendar',0)
+    z=w.controls(v.loc[rows],'calendar').drop(columns='intercept')
+    design=ro.make_design(pd.concat([pd.DataFrame({'const':1.,'exposure_c':v.loc[rows,'x']}),z],axis=1))
+    adjacent=dataclasses.replace(design,weeks=np.arange(len(rows)),_pairs={})
+    for name,column in (('beta_R','delta_reserve_balances'),('theta_RRP','rrp_net_route')):
+        fit=ro.fit(design,v.loc[rows,column].to_numpy(),'exposure_c')
+        assert row[name]==pytest.approx(fit['beta'],rel=1e-9)
+        assert row[f'se_{name}_hac12']==pytest.approx(fit['se_hac12'],rel=1e-9)
+        assert row[f'se_{name}_hac12']!=pytest.approx(ro.fit(adjacent,v.loc[rows,column].to_numpy(),'exposure_c')['se_hac12'],rel=1e-6)
 
 
 def test_rrp_sign():

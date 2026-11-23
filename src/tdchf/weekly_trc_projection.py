@@ -26,6 +26,7 @@ ERAS = {
     '2016Q1_2025Q4': ('2016-01-01', '2025-12-31'),
 }
 MODERN = '2016Q1_2025Q4'
+HAC_BANDWIDTH = ro.HAC_BANDWIDTHS[0]  # the weekly reserve-offset tables' baseline
 CALENDAR = ro.BASELINE_CONTROLS[:-2]
 LAGGED = ro.BASELINE_CONTROLS
 EXPOSURES = ('trc_core', 'trc_par_sensitivity', 'c_h')
@@ -163,6 +164,17 @@ def slope(x: np.ndarray, y: np.ndarray, q: np.ndarray) -> np.ndarray:
     return xp @ residual(y, q) / den
 
 
+def bartlett_variance(scores: np.ndarray, weeks: np.ndarray, bandwidth: int) -> np.ndarray:
+    """Sum of score products weighted 1-distance/(bandwidth+1) over calendar weeks, so gaps are not adjacent."""
+    variance = (scores*scores).sum(axis=0)
+    for lag in range(1, bandwidth+1):
+        right = np.searchsorted(weeks, weeks+lag)
+        ok = right < len(weeks)
+        ok[ok] &= weeks[right[ok]] == weeks[ok]+lag
+        variance += 2*(1-lag/(bandwidth+1))*(scores[ok]*scores[right[ok]]).sum(axis=0)
+    return variance
+
+
 def common_mask(variants: list[pd.DataFrame], spec: str, horizon: int) -> pd.DatetimeIndex:
     valid = pd.Series(True, index=variants[0].index)
     for v in variants:
@@ -191,10 +203,14 @@ def project(v: pd.DataFrame, rows: pd.DatetimeIndex, spec: str, h: int) -> tuple
     gap = b[0] - 1. - subsequent - contributions
     if abs(gap) > 1e-8:
         raise AssertionError('same-mask decomposition does not close')
+    xp = residual(x, q)
+    scores = (xp / (xp @ xp))[:, None] * (residual(y[:, :2], q) - xp[:, None] * b[:2])
+    se = np.sqrt(bartlett_variance(scores, ro._week_ordinals(rows), HAC_BANDWIDTH))
     row = {'n': len(rows), 'control_rank': rank, 'residual_df': len(rows) - rank - 1,
            'first_week': str(rows.min().date()), 'last_week': str(rows.max().date()),
            'last_endpoint': str((rows.max() + pd.Timedelta(weeks=h)).date()),
-           'h': h, 'weekly_flows': h+1, 'beta_R': float(b[0]), 'theta_RRP': float(b[1]),
+           'h': h, 'weekly_flows': h+1, 'beta_R': float(b[0]), f'se_beta_R_hac{HAC_BANDWIDTH}': float(se[0]),
+           'theta_RRP': float(b[1]), f'se_theta_RRP_hac{HAC_BANDWIDTH}': float(se[1]),
            'raw_rrp_balance_slope': float(b[2]), 'Omega': float(-b[1]),
            'subsequent_TRC': subsequent, 'remainder_sum': float(contributions), 'closure_gap': float(gap),
            'inference_status': 'descriptive'}
@@ -366,13 +382,7 @@ def restricted_test(x: np.ndarray, z: np.ndarray, contributions: np.ndarray, tar
     # Transform scores to the tested reserve departure and signed RRP pair.
     primitive_score = a[:, None] * adjusted
     scores = np.c_[primitive_score.sum(axis=1), primitive_score[:, 0]]
-    weeks = ro._week_ordinals(dates)
-    variance = (scores*scores).sum(axis=0)
-    for lag in range(1, bandwidth+1):
-        right = np.searchsorted(weeks, weeks+lag)
-        ok = right < len(weeks)
-        ok[ok] &= weeks[right[ok]] == weeks[ok]+lag
-        variance += 2*(1-lag/(bandwidth+1))*(scores[ok]*scores[right[ok]]).sum(axis=0)
+    variance = bartlett_variance(scores, ro._week_ordinals(dates), bandwidth)
     scale = np.sqrt(np.maximum(variance, 1e-24))
     bank = multiplier_bank(dates, bandwidth, reps, rng) if multipliers is None else multipliers
     # Shared calendar multiplier perturbs primitive vectors; reserve draws are
@@ -520,6 +530,7 @@ def run(source_root: Path, out: Path, config_path: Path=Path(CONFIG), *, progres
         'inversion':'Joint set defined by acceptance of the same restricted test at each target; coverage checks true nonzero target membership with independent size/coverage streams',
         'calibration':'Observed exposure and calendar geometry; Gaussian AR(.3), concentrated scale sqrt(.2+4.8*partial_X^2/mean_partial_X^2), crisis scale 5 vs .6, persistent AR(.85), variance-normalized t4 with AR(.3); observed residual SD/correlation',
         'mc_gate':'All predeclared DGP/bandwidth cells require 95% Wilson MC upper size <=.075 and lower joint coverage >=.90; MCSE also reported',
+        'standard_errors':f'se_beta_R_hac{HAC_BANDWIDTH} and se_theta_RRP_hac{HAC_BANDWIDTH}: unrestricted-fit calendar-distance Bartlett HAC, bandwidth {HAC_BANDWIDTH}, no small-sample scaling, the estimator of the weekly reserve-offset tables; descriptive scale only unless the promotion rule passes',
         'interpretation':'Departure from one is covariance with other reserve factors and measurement bridges; no causal, landing, retention or fund-route interpretation',
         'source_uncertainty':'Cash core remains a proxy: secondary cash prices, coupon entitlements and unmatched internal postings are not observed; closure is accounting only',
         'promotion':'passed' if gate else 'failed_everything_descriptive',
@@ -568,7 +579,7 @@ def render_readout(tables: dict, producer: str, gate: bool, modern: str = MODERN
     r=tables['route_paths']; i=tables['influence']; s=tables['state_interaction']; cal=tables['calibration']
     text = f'# Weekly TRC projection readout\n\nCommitted producer: `{producer}`.\n\n'
     text += ('The calibration promotion rule passed for the narrow modern h=0 candidate.\n\n' if gate else
-             'The calibration promotion rule failed. Every coefficient is descriptive; no inferential p-values, stars or confidence claims are exported.\n\n')
+             'The calibration promotion rule failed. Every coefficient is descriptive; HAC standard errors are a descriptive scale, and no inferential p-values, stars or confidence claims are exported.\n\n')
     text += ('The accounting coefficient on exact same-clock TRC is one. The measured exposure is a cash-valued proxy. '
              'Projection departures reflect covariance with other reserve factors and measurement bridges. '
              'They do not identify landing, retention, a fund route or a causal response. '
@@ -578,7 +589,7 @@ def render_readout(tables: dict, producer: str, gate: bool, modern: str = MODERN
     text += ('Calendar-only controls are primary. Core, par and cash share each h=0 sample; lagged cash and reserve controls are a separate sensitivity. '
              'Transitions stay in the pooled estimate. Short transition fits have little residual variation and are especially fragile; residual degrees of freedom are in the coefficient table. '
              'Missing required inputs are never filled. Secondary prices, coupon entitlement and unmatched internal accounts remain measurement uncertainties.\n\n')
-    text += '## Same-week comparisons\n\n' + markdown_table(c.loc[c.controls.eq('calendar'),['era','exposure','n','residual_df','beta_R','theta_RRP']])
+    text += '## Same-week comparisons\n\n' + markdown_table(c.loc[c.controls.eq('calendar'),['era','exposure','n','residual_df','beta_R',f'se_beta_R_hac{HAC_BANDWIDTH}','theta_RRP',f'se_theta_RRP_hac{HAC_BANDWIDTH}']])
     text += '\n## Modern core departure from one\n\n' + markdown_table(d.loc[d.era.eq(modern)&d.exposure.eq('trc_core')&d.controls.eq('calendar'),['component','contribution']])
     text += '\n## Modern cumulative profile\n\nThe common h=8 mask is used at every horizon. h=8 includes nine flows. The subsequent-TRC term is part of the identity.\n\n'
     text += markdown_table(h.loc[h.era.eq(modern)&h.exposure.eq('trc_core')&h.controls.eq('calendar'),['sample_mask','h','n','beta_R','theta_RRP','subsequent_TRC','remainder_sum','endpoints_cross_era']])
