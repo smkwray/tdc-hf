@@ -26,11 +26,6 @@ repos:
     preferred_outputs:
       z1_sector_panel: data/interim/z1_sector_panel_full.csv
       canonical_maturity: outputs/full_coverage_release/canonical_sector_maturity.csv
-  tdcsfc:
-    root: ../tdcsfc
-    role: accounting_and_source_normalization_reference
-    preferred_outputs:
-      processed_source_contracts: data/processed
 
 contracts:
   # Legacy five-component contract used by the Denton monthly comparison.
