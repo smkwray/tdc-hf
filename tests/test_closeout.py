@@ -31,6 +31,35 @@ def test_export_anchor_contract_audit_identifies_matching_anchor(tmp_path) -> No
     assert base["interpretation"] == "near_exact_default_anchor_match"
 
 
+def test_export_anchor_contract_audit_defaults_to_configured_upstream(tmp_path, monkeypatch) -> None:
+    # Without an explicit estimates path, the audit must read the upstream
+    # checkout named in config/upstream_sources.yml, not a machine-specific path.
+    dates = pd.date_range("2020-01-31", periods=6, freq="ME")
+    proxy_path = tmp_path / "proxy.csv"
+    pd.DataFrame({"date": dates, "tdc_monthly": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]}).to_csv(proxy_path, index=False)
+    upstream = tmp_path / "upstream" / "tdcest" / "data" / "processed"
+    upstream.mkdir(parents=True)
+    pd.DataFrame(
+        {"date": pd.to_datetime(["2020-03-31", "2020-06-30"]), "tdc_base_bank_only_ru_flow": [6.0, 15.0]}
+    ).to_csv(upstream / "tdc_estimates.csv", index=False)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "upstream_sources.yml").write_text(
+        "repos:\n"
+        "  tdcest:\n"
+        "    root: upstream/tdcest\n"
+        "    preferred_outputs:\n"
+        "      estimates: data/processed/tdc_estimates.csv\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    report = export_anchor_contract_audit(monthly_proxy_csv=proxy_path, out_csv=tmp_path / "audit.csv")
+
+    out = pd.read_csv(report["out"])
+    base = out.loc[out["candidate_anchor"].eq("tdc_base_bank_only_ru_flow")].iloc[0]
+    assert base["interpretation"] == "near_exact_default_anchor_match"
+
+
 def test_export_noniv_tdc_lp_closeout_writes_descriptive_table(tmp_path) -> None:
     dates = pd.date_range("2020-01-31", periods=36, freq="ME")
     tdc = pd.Series(range(36), dtype=float)

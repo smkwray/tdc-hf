@@ -13,6 +13,7 @@ import pandas as pd
 from .indicators import read_wide_time_series_csv
 from .lp import run_local_projections
 from .units import add_same_unit_columns
+from .upstream import resolve_repos
 
 
 CORE_OUTCOMES = [
@@ -37,7 +38,7 @@ DEFAULT_ANCHOR_CANDIDATES = (
 
 
 def _tdcest_default_path() -> Path:
-    return Path.home() / "malus" / "proj" / "tdcest" / "data" / "processed" / "tdc_estimates.csv"
+    return resolve_repos()["tdcest"].preferred_outputs["estimates"]
 
 
 def _sig(row: pd.Series, *, low: str = "same_unit_lower95", high: str = "same_unit_upper95") -> bool:
